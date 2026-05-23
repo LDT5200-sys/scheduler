@@ -1,0 +1,2471 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>直播间智能排班系统</title>
+<style>
+  :root {
+    --bg: #0f0f13;
+    --bg2: #17171e;
+    --bg3: #1e1e28;
+    --border: rgba(255,255,255,0.08);
+    --border2: rgba(255,255,255,0.14);
+    --text: #f0f0f5;
+    --text2: #9090a8;
+    --text3: #5a5a72;
+    --accent: #6c63ff;
+    --accent2: #8b84ff;
+    --accent-bg: rgba(108,99,255,0.12);
+    --gold: #f0b429;
+    --gold-bg: rgba(240,180,41,0.1);
+    --green: #34d399;
+    --green-bg: rgba(52,211,153,0.1);
+    --red: #f87171;
+    --red-bg: rgba(248,113,113,0.1);
+    --blue: #60a5fa;
+    --blue-bg: rgba(96,165,250,0.1);
+    --orange: #fb923c;
+    --radius: 10px;
+    --radius-lg: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'PingFang SC', 'Microsoft YaHei', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 14px;
+  }
+
+  /* Layout */
+  .app { display: flex; min-height: 100vh; }
+  .sidebar {
+    width: 220px; flex-shrink: 0;
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    padding: 0;
+    position: fixed; top: 0; left: 0; bottom: 0;
+    z-index: 100;
+  }
+  .main { margin-left: 220px; flex: 1; padding: 32px 40px; max-width: 1100px; }
+
+  /* Sidebar */
+  .logo {
+    padding: 22px 20px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .logo-title {
+    font-size: 15px; font-weight: 700;
+    background: linear-gradient(135deg, var(--accent2), var(--gold));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    line-height: 1.3;
+  }
+  .logo-sub { font-size: 11px; color: var(--text3); margin-top: 3px; }
+
+  .nav { padding: 12px 10px; flex: 1; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: var(--radius);
+    cursor: pointer; color: var(--text2);
+    font-size: 13px; font-weight: 500;
+    transition: all .15s; margin-bottom: 2px;
+    border: 1px solid transparent;
+  }
+  .nav-item:hover { background: var(--bg3); color: var(--text); }
+  .nav-item.active {
+    background: var(--accent-bg);
+    color: var(--accent2);
+    border-color: rgba(108,99,255,0.25);
+  }
+  .nav-icon { font-size: 16px; width: 20px; text-align: center; }
+
+  .sidebar-footer {
+    padding: 14px 16px;
+    border-top: 1px solid var(--border);
+    font-size: 11px; color: var(--text3);
+  }
+
+  /* API Key section */
+  .api-section {
+    margin: 8px 10px;
+    padding: 10px 12px;
+    background: var(--bg3);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+  }
+  .api-label { font-size: 11px; color: var(--text3); margin-bottom: 6px; display: flex; align-items: center; gap: 4px; }
+  .api-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--red); }
+  .api-dot.on { background: var(--green); }
+  .api-input-wrap { position: relative; }
+  .api-input {
+    width: 100%; background: var(--bg2);
+    border: 1px solid var(--border); border-radius: 7px;
+    color: var(--text); font-size: 12px; padding: 7px 32px 7px 9px;
+    outline: none; font-family: monospace;
+    transition: border .15s;
+  }
+  .api-input:focus { border-color: var(--accent); }
+  .api-eye {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    cursor: pointer; color: var(--text3); font-size: 14px; background: none; border: none;
+  }
+  .api-status { font-size: 11px; margin-top: 5px; color: var(--text3); }
+
+  /* Panel */
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .panel-title {
+    font-size: 22px; font-weight: 700; margin-bottom: 6px;
+    color: var(--text);
+  }
+  .panel-desc { font-size: 13px; color: var(--text2); margin-bottom: 28px; line-height: 1.6; }
+
+  /* Section */
+  .section { margin-bottom: 28px; }
+  .section-header {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 14px;
+  }
+  .section-title {
+    font-size: 13px; font-weight: 600; color: var(--text2);
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  .section-line { flex: 1; height: 1px; background: var(--border); }
+
+  /* Card */
+  .card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 20px;
+  }
+  .card + .card { margin-top: 12px; }
+
+  /* Form */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .form-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  .form-group { display: flex; flex-direction: column; gap: 6px; }
+  .form-group label { font-size: 12px; color: var(--text2); font-weight: 500; }
+  .form-group input, .form-group select, .form-group textarea {
+    background: var(--bg3); border: 1px solid var(--border);
+    border-radius: var(--radius); color: var(--text);
+    padding: 9px 12px; font-size: 13px;
+    outline: none; transition: border .15s;
+    font-family: inherit;
+  }
+  .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    border-color: var(--accent);
+  }
+  .form-group textarea { min-height: 72px; resize: vertical; line-height: 1.6; }
+  .form-group select option { background: var(--bg2); }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 18px; border-radius: var(--radius);
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    border: none; transition: all .15s; font-family: inherit;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent2); }
+  .btn-ghost {
+    background: transparent; color: var(--text2);
+    border: 1px solid var(--border2);
+  }
+  .btn-ghost:hover { background: var(--bg3); color: var(--text); }
+  .btn-danger { background: var(--red-bg); color: var(--red); border: 1px solid rgba(248,113,113,0.2); }
+  .btn-danger:hover { background: rgba(248,113,113,0.2); }
+  .btn-sm { padding: 5px 10px; font-size: 12px; }
+  .btn-icon { width: 30px; height: 30px; padding: 0; justify-content: center; }
+
+  /* Tags/Chips */
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px; border-radius: 20px;
+    font-size: 12px; font-weight: 500;
+    border: 1px solid transparent;
+  }
+  .chip-accent { background: var(--accent-bg); color: var(--accent2); border-color: rgba(108,99,255,0.2); }
+  .chip-gold { background: var(--gold-bg); color: var(--gold); border-color: rgba(240,180,41,0.2); }
+  .chip-green { background: var(--green-bg); color: var(--green); border-color: rgba(52,211,153,0.2); }
+  .chip-red { background: var(--red-bg); color: var(--red); border-color: rgba(248,113,113,0.2); }
+  .chip-blue { background: var(--blue-bg); color: var(--blue); border-color: rgba(96,165,250,0.2); }
+  .chip-gray { background: rgba(255,255,255,0.06); color: var(--text2); border-color: var(--border); }
+  .chip .remove {
+    cursor: pointer; color: inherit; opacity: .6;
+    font-size: 13px; line-height: 1; background: none; border: none;
+    padding: 0; display: flex;
+  }
+  .chip .remove:hover { opacity: 1; }
+
+  /* Anchor list */
+  .anchor-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px;
+    background: var(--bg3); border: 1px solid var(--border);
+    border-radius: var(--radius); margin-bottom: 7px;
+  }
+  .anchor-avatar {
+    width: 34px; height: 34px; border-radius: 50%;
+    background: var(--accent-bg); color: var(--accent2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; flex-shrink: 0;
+  }
+  .anchor-info { flex: 1; }
+  .anchor-name-text { font-size: 14px; font-weight: 600; }
+  .anchor-meta { font-size: 11px; color: var(--text3); margin-top: 2px; }
+
+  /* Rating pills */
+  .rating-group { display: flex; gap: 5px; flex-wrap: wrap; }
+  .rating-btn {
+    padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 700;
+    cursor: pointer; border: 1px solid transparent;
+    background: rgba(255,255,255,0.05); color: var(--text2);
+    transition: all .12s;
+  }
+  .rating-btn.sel-S { background: var(--gold-bg); color: var(--gold); border-color: rgba(240,180,41,0.3); }
+  .rating-btn.sel-A { background: var(--accent-bg); color: var(--accent2); border-color: rgba(108,99,255,0.3); }
+  .rating-btn.sel-B { background: var(--green-bg); color: var(--green); border-color: rgba(52,211,153,0.3); }
+  .rating-btn.sel-C { background: rgba(255,255,255,0.05); color: var(--text2); border-color: var(--border2); }
+
+  /* Shift pills */
+  .shift-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 14px; background: var(--bg3);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    margin-bottom: 7px;
+  }
+  .shift-badge {
+    width: 28px; height: 28px; border-radius: 8px;
+    background: var(--accent-bg); color: var(--accent2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700; flex-shrink: 0;
+  }
+
+  /* Special rules */
+  .rule-card {
+    background: var(--bg3); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px;
+    margin-bottom: 8px; position: relative;
+  }
+  .rule-card .rule-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .rule-type-badge {
+    font-size: 11px; font-weight: 600; padding: 3px 9px;
+    border-radius: 20px;
+  }
+
+  /* Schedule table */
+  .schedule-wrap { overflow-x: auto; }
+  .schedule-table {
+    width: 100%; border-collapse: collapse;
+    min-width: 700px;
+  }
+  .schedule-table th {
+    padding: 10px 8px; font-size: 11px; font-weight: 600;
+    color: var(--text2); text-align: center;
+    border-bottom: 1px solid var(--border2);
+    white-space: nowrap;
+  }
+  .schedule-table td {
+    padding: 7px 6px; border-bottom: 1px solid var(--border);
+    text-align: center; vertical-align: middle;
+  }
+  .schedule-table .shift-label {
+    text-align: left; font-size: 11px; font-weight: 600;
+    color: var(--text2); white-space: nowrap; padding-left: 12px;
+    min-width: 130px;
+  }
+  .cell-name {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 4px 9px; border-radius: 20px;
+    font-size: 12px; font-weight: 600;
+    background: var(--accent-bg); color: var(--accent2);
+  }
+  .cell-name.gold { background: var(--gold-bg); color: var(--gold); }
+  .cell-name.off-day { background: var(--green-bg); color: var(--green); font-size: 11px; }
+  .cell-empty { color: var(--text3); font-size: 12px; }
+
+  .off-row td { background: rgba(52,211,153,0.04); }
+
+  /* Week nav */
+  .week-nav {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 20px;
+  }
+  .week-label {
+    flex: 1; text-align: center; font-size: 15px; font-weight: 600;
+    color: var(--text);
+  }
+  .week-btn {
+    width: 34px; height: 34px; border-radius: var(--radius);
+    background: var(--bg3); border: 1px solid var(--border);
+    color: var(--text2); cursor: pointer; font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+    transition: all .15s;
+  }
+  .week-btn:hover { border-color: var(--accent); color: var(--accent2); }
+
+  /* Upload zone */
+  .upload-zone {
+    border: 1.5px dashed var(--border2);
+    border-radius: var(--radius-lg); padding: 28px;
+    text-align: center; cursor: pointer;
+    transition: all .15s; background: var(--bg3);
+  }
+  .upload-zone:hover { border-color: var(--accent); background: var(--accent-bg); }
+  .upload-icon { font-size: 32px; margin-bottom: 8px; }
+  .upload-text { font-size: 14px; color: var(--text2); }
+  .upload-sub { font-size: 12px; color: var(--text3); margin-top: 4px; }
+
+  /* Alert */
+  .alert {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 12px 14px; border-radius: var(--radius); margin-bottom: 12px;
+    font-size: 13px; line-height: 1.6;
+  }
+  .alert-warn { background: rgba(240,180,41,0.1); border: 1px solid rgba(240,180,41,0.2); color: #c9932a; }
+  .alert-info { background: var(--blue-bg); border: 1px solid rgba(96,165,250,0.2); color: var(--blue); }
+  .alert-success { background: var(--green-bg); border: 1px solid rgba(52,211,153,0.2); color: var(--green); }
+  .alert-error { background: var(--red-bg); border: 1px solid rgba(248,113,113,0.2); color: var(--red); }
+
+  /* Loading */
+  .loading-overlay {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(10,10,14,0.88);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+  }
+  .loading-overlay.show { display: flex !important; }
+  .loading-box {
+    background: #1e1e28;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 16px;
+    padding: 32px 36px 28px;
+    width: 340px;
+    max-width: 90vw;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .loading-icon { font-size: 34px; margin-bottom: 12px; }
+  .l-pulse { animation: lpulse 1.4s ease-in-out infinite; }
+  @keyframes lpulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.55;transform:scale(.9)} }
+  .loading-title { font-size: 15px; font-weight: 600; color: #f0f0f5; margin-bottom: 5px; text-align:center; }
+  .loading-stage { font-size: 12px; color: #9090a8; margin-bottom: 18px; text-align:center; min-height:16px; }
+  .prog-track { width:100%; height:5px; background:#1e1e28; border:1px solid rgba(255,255,255,0.1); border-radius:3px; overflow:hidden; margin-bottom:8px; }
+  .prog-fill { height:100%; border-radius:3px; background: #6c63ff; transition:width 0.3s ease; width:0%; }
+  .prog-row { display:flex; justify-content:space-between; width:100%; font-size:11px; color:#5a5a72; margin-bottom:16px; }
+  .eta-text { font-size:12px; color:#9090a8; }
+  .eta-text b { color:#8b84ff; }
+  .spinner {
+    width: 44px; height: 44px; border: 3px solid rgba(255,255,255,0.1);
+    border-top-color: #6c63ff; border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Stats */
+  .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .stat-card { background: var(--bg3); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+  .stat-num { font-size: 24px; font-weight: 700; color: var(--text); }
+  .stat-label { font-size: 12px; color: var(--text3); margin-top: 3px; }
+
+  /* Divider */
+  .divider { height: 1px; background: var(--border); margin: 20px 0; }
+
+  /* Action bar */
+  .action-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+
+  /* Summary box */
+  .summary-box {
+    background: var(--accent-bg); border: 1px solid rgba(108,99,255,0.25);
+    border-radius: var(--radius); padding: 12px 16px;
+    font-size: 13px; color: var(--accent2); margin-bottom: 16px;
+    display: flex; gap: 8px; align-items: flex-start; line-height: 1.6;
+  }
+
+  /* Days grid for special rules */
+  .days-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+  .day-toggle {
+    padding: 5px 11px; border-radius: var(--radius);
+    font-size: 12px; font-weight: 500;
+    background: var(--bg3); border: 1px solid var(--border);
+    color: var(--text2); cursor: pointer; transition: all .12s;
+  }
+  .day-toggle.sel {
+    background: var(--accent-bg); color: var(--accent2);
+    border-color: rgba(108,99,255,0.3);
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text3); }
+
+  /* Tabs inside panel */
+  .inner-tabs { display: flex; gap: 0; margin-bottom: 20px; border-bottom: 1px solid var(--border); }
+  .inner-tab {
+    padding: 9px 18px; font-size: 13px; font-weight: 500; cursor: pointer;
+    color: var(--text2); border-bottom: 2px solid transparent;
+    transition: all .15s; margin-bottom: -1px; background: none; border-top: none; border-left: none; border-right: none;
+  }
+  .inner-tab.active { color: var(--accent2); border-bottom-color: var(--accent2); }
+  .inner-panel { display: none; }
+  .inner-panel.active { display: block; }
+
+  input[type=number]::-webkit-inner-spin-button { opacity: 1; }
+
+  .step-badge {
+    width:22px;height:22px;border-radius:50%;
+    background:var(--accent);color:#fff;
+    font-size:11px;font-weight:700;
+    display:inline-flex;align-items:center;justify-content:center;
+    flex-shrink:0;margin-right:6px;
+  }
+  .field-chip {
+    display:inline-flex;align-items:center;gap:6px;
+    padding:6px 11px;border-radius:var(--radius);
+    font-size:12px;cursor:pointer;
+    background:var(--bg3);border:1px solid var(--border);
+    color:var(--text2);transition:all .12s;user-select:none;
+  }
+  .field-chip:hover{border-color:var(--accent);color:var(--text);}
+  .field-chip.selected{background:var(--accent-bg);border-color:rgba(108,99,255,0.4);color:var(--accent2);font-weight:600;}
+  .field-chip .fc-tag{font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(108,99,255,0.2);color:var(--accent2);}
+  .field-chip.recommended .fc-tag{background:var(--gold-bg);color:var(--gold);}
+  .weight-row{
+    display:grid;grid-template-columns:140px 1fr 60px 80px;
+    gap:10px;align-items:center;
+    padding:8px 12px;background:var(--bg3);
+    border:1px solid var(--border);border-radius:var(--radius);margin-bottom:7px;
+    font-size:13px;
+  }
+  .weight-row .wname{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .weight-row input[type=range]{width:100%;}
+  .weight-row .wval{text-align:center;font-weight:600;color:var(--accent2);}
+  .weight-row select{font-size:12px;padding:4px 6px;}
+
+  .sidebar-save-bar {
+    display: flex; gap: 8px; padding: 10px 12px;
+    border-top: 1px solid var(--border);
+  }
+  .save-btn, .clear-btn {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 8px 0; border-radius: 8px; font-size: 12px; font-weight: 600;
+    cursor: pointer; transition: all .15s; border: 1px solid transparent;
+    font-family: inherit;
+  }
+  .save-btn { background: var(--accent); color: #fff; }
+  .save-btn:hover { background: var(--accent2); }
+  .clear-btn { background: var(--red-bg); color: var(--red); border-color: rgba(248,113,113,0.25); }
+  .clear-btn:hover { background: rgba(248,113,113,0.2); }
+  .save-toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: #17171e; border: 1px solid rgba(108,99,255,0.4);
+    color: #8b84ff; font-size: 13px; font-weight: 500;
+    padding: 10px 22px; border-radius: 24px;
+    opacity: 0; pointer-events: none; transition: opacity .3s;
+    z-index: 20000; white-space: nowrap;
+  }
+  .save-toast.show { opacity: 1; }
+  .clear-check-item {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 10px 12px; border-radius: 8px;
+    background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07);
+    cursor: pointer; transition: background .12s;
+  }
+  .clear-check-item:hover { background: rgba(255,255,255,0.06); }
+  .clear-check-item input[type=checkbox] { width:15px; height:15px; margin-top:2px; cursor:pointer; accent-color:#6c63ff; flex-shrink:0; }
+  .ci-label { font-size:13px; font-weight:500; color:#f0f0f5; }
+  .ci-desc  { font-size:11px; color:#5a5a72; margin-top:2px; }
+
+</style>
+</head>
+<body>
+
+<!-- 清除设置弹窗 -->
+<div id="clearModal" style="display:none;position:fixed;inset:0;background:rgba(10,10,14,0.82);z-index:10000;align-items:center;justify-content:center">
+  <div style="background:#1e1e28;border:1px solid rgba(255,255,255,0.15);border-radius:16px;padding:28px 32px;width:380px;max-width:92vw">
+    <div style="font-size:15px;font-weight:600;color:#f0f0f5;margin-bottom:6px">清除设置</div>
+    <div style="font-size:12px;color:#9090a8;margin-bottom:20px">勾选需要清除的板块，点击确认后不可恢复</div>
+    <div id="clearCheckList" style="display:flex;flex-direction:column;gap:10px;margin-bottom:22px"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end">
+      <button onclick="hideClearModal()" style="padding:8px 18px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,0.15);color:#9090a8;cursor:pointer;font-size:13px">取消</button>
+      <button onclick="confirmClear()" style="padding:8px 18px;border-radius:8px;background:#f87171;border:none;color:#fff;cursor:pointer;font-size:13px;font-weight:600">确认清除</button>
+    </div>
+  </div>
+</div>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-box">
+    <div class="loading-icon l-pulse" id="loadingIcon">🤖</div>
+    <div class="loading-title" id="loadingTitle">AI 智能排班推演中</div>
+    <div class="loading-stage" id="loadingStage">正在构建请求...</div>
+    <div class="prog-track"><div class="prog-fill" id="progFill"></div></div>
+    <div class="prog-row">
+      <span id="progPct">0%</span>
+      <span id="progLabel">初始化</span>
+    </div>
+    <div class="eta-text">预计还需 <b id="etaSec">--</b> 秒</div>
+  </div>
+</div>
+
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="logo">
+      <div class="logo-title">🎬 直播智能排班</div>
+      <div class="logo-sub">抖音男装 · 人效最大化</div>
+    </div>
+
+    <div class="api-section">
+      <div class="api-label">
+        <span class="api-dot" id="apiDot"></span>
+        AI 大脑配置
+      </div>
+      <select id="apiProvider" onchange="onProviderChange()" style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px;padding:6px 8px;margin-bottom:6px;outline:none">
+        <option value="anthropic">Anthropic (Claude)</option>
+        <option value="siliconflow">✅ 硅基流动（推荐·无跨域限制）</option>
+        <option value="yunwu">☁️ 云雾API（复制Prompt模式）</option>
+        <option value="openai">自定义地址（需支持跨域）</option>
+      </select>
+      <select id="modelSelect" style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px;padding:6px 8px;margin-bottom:6px;outline:none">
+        <option value="claude-sonnet-4-20250514">claude-sonnet-4-20250514</option>
+      </select>
+      <div id="customBaseUrlWrap" style="display:none;margin-bottom:6px">
+        <input type="text" class="api-input" id="customBaseUrl" placeholder="https://yunwu.ai/v1/chat/completions" style="font-size:11px" />
+      </div>
+      <div class="api-input-wrap">
+        <input type="password" class="api-input" id="apiKeyInput" placeholder="粘贴 API Key..." autocomplete="off" oninput="onApiKeyInput()" />
+        <button class="api-eye" onclick="toggleApiVis()" title="显示/隐藏">👁</button>
+      </div>
+      <div class="api-status" id="apiStatus">未配置 · 生成排班需要此Key</div>
+      <div id="regGuide" style="display:none;margin-top:8px;padding:7px 9px;background:rgba(108,99,255,0.1);border-radius:7px;border:1px solid rgba(108,99,255,0.2)">
+        <div style="font-size:10px;color:#8b84ff;font-weight:600;margin-bottom:3px">没有Key？免费注册</div>
+        <a href="https://cloud.siliconflow.cn" target="_blank" style="font-size:10px;color:#8b84ff;text-decoration:underline">硅基流动 → 免费额度够用</a>
+      </div>
+      <div id="corsWarning" style="display:none;font-size:10px;color:#f0b429;margin-top:4px;line-height:1.6">⚠️ 云雾等平台设有域名白名单，本地HTML文件会被403拒绝。<br>推荐改用 <strong style="color:#8b84ff">硅基流动</strong>，无限制，支持DeepSeek/Qwen3。</div>
+    </div>
+
+    <nav class="nav">
+      <div class="nav-item active" onclick="gotoPanel('anchors')" id="nav-anchors">
+        <span class="nav-icon">👥</span> 主播管理
+      </div>
+      <div class="nav-item" onclick="gotoPanel('shifts')" id="nav-shifts">
+        <span class="nav-icon">🕐</span> 班次配置
+      </div>
+      <div class="nav-item" onclick="gotoPanel('rules')" id="nav-rules">
+        <span class="nav-icon">⚙️</span> 排班规则
+      </div>
+      <div class="nav-item" onclick="gotoPanel('special')" id="nav-special">
+        <span class="nav-icon">🚨</span> 特殊要求
+        <span id="specialBadge" style="display:none;margin-left:auto;background:var(--red-bg);color:var(--red);font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px"></span>
+      </div>
+      <div class="nav-item" onclick="gotoPanel('data')" id="nav-data">
+        <span class="nav-icon">📊</span> 绩效数据
+      </div>
+      <div class="nav-item" onclick="gotoPanel('generate')" id="nav-generate">
+        <span class="nav-icon">🤖</span> 生成排班
+      </div>
+      <div class="nav-item" onclick="gotoPanel('result')" id="nav-result">
+        <span class="nav-icon">📋</span> 排班结果
+      </div>
+    </nav>
+
+    <div class="sidebar-save-bar">
+      <button class="save-btn" onclick="saveAllSettings()" title="保存全部设置到本地">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+        保存设置
+      </button>
+      <button class="clear-btn" onclick="showClearModal()" title="分板块清除设置">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+        清除
+      </button>
+    </div>
+    <div id="saveToast" class="save-toast"></div>
+    <div class="sidebar-footer">v1.0 · 劳务合规版</div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- 主播管理 -->
+    <div class="panel active" id="panel-anchors">
+      <div class="panel-title">主播管理</div>
+      <div class="panel-desc">维护本周参与排班的主播花名册，并为每位主播设定综合能力评级（用于AI排班优先级判断）。</div>
+
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">花名册</span>
+          <div class="section-line"></div>
+          <span class="chip chip-gray" id="anchorCount">7人</span>
+        </div>
+        <div id="anchorList"></div>
+        <div class="card" style="padding:14px">
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+            <div class="form-group" style="flex:1;min-width:120px">
+              <label>主播姓名</label>
+              <input type="text" id="newAnchorName" placeholder="输入姓名后按回车" onkeydown="if(event.key==='Enter')addAnchor()" />
+            </div>
+            <div class="form-group" style="min-width:100px">
+              <label>初始评级</label>
+              <select id="newAnchorRating">
+                <option value="S">S级 · 顶尖</option>
+                <option value="A">A级 · 优秀</option>
+                <option value="B" selected>B级 · 良好</option>
+                <option value="C">C级 · 普通</option>
+              </select>
+            </div>
+            <button class="btn btn-primary" onclick="addAnchor()">＋ 添加主播</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 班次配置 -->
+    <div class="panel" id="panel-shifts">
+      <div class="panel-title">班次配置</div>
+      <div class="panel-desc">配置直播间每日班次时段。系统默认5个标准班次，可根据实际需求增删调整。</div>
+
+      <div class="section">
+        <div class="section-header">
+          <span class="section-title">当前班次</span>
+          <div class="section-line"></div>
+        </div>
+        <div id="shiftList"></div>
+        <div class="card" style="padding:14px">
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+            <div class="form-group" style="min-width:100px">
+              <label>班次名称</label>
+              <input type="text" id="newShiftName" placeholder="如 F班" />
+            </div>
+            <div class="form-group" style="min-width:110px">
+              <label>开始时间</label>
+              <input type="time" id="newShiftStart" value="06:00" />
+            </div>
+            <div class="form-group" style="min-width:110px">
+              <label>结束时间</label>
+              <input type="time" id="newShiftEnd" value="10:00" />
+            </div>
+            <button class="btn btn-primary" onclick="addShift()">＋ 添加班次</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 排班规则 -->
+    <div class="panel" id="panel-rules">
+      <div class="panel-title">排班规则</div>
+      <div class="panel-desc">配置劳务合规硬性约束与人效优化策略，AI排班时将严格遵守所有红线规则。</div>
+
+      <div class="section">
+        <div class="section-header"><span class="section-title">劳务合规红线</span><div class="section-line"></div></div>
+        <div class="card">
+          <div class="form-grid" style="gap:16px">
+            <div class="form-group">
+              <label>每人每周工作班次数（上班天数）</label>
+              <input type="number" id="rWeeklyShifts" value="5" min="1" max="7" />
+            </div>
+            <div class="form-group">
+              <label>每周强制调休天数</label>
+              <input type="number" id="rWeeklyOff" value="2" min="1" max="6" />
+            </div>
+            <div class="form-group">
+              <label>班次间最短物理休息（小时）</label>
+              <input type="number" id="rMinRest" value="12" min="8" max="24" />
+            </div>
+            <div class="form-group">
+              <label>最大连续工作天数</label>
+              <input type="number" id="rMaxCons" value="5" min="1" max="7" />
+            </div>
+          </div>
+          <div class="alert alert-warn" style="margin-top:14px;margin-bottom:0">
+            ⚠️ 系统将自动检测：禁止"前日22:00-02:00，次日06:00-10:00/10:00-14:00"死亡班次组合
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-header"><span class="section-title">人效优化策略</span><div class="section-line"></div></div>
+        <div class="card">
+          <div class="form-grid" style="gap:16px">
+            <div class="form-group">
+              <label>黄金时段（S/A级主播优先锁定）</label>
+              <select id="rGoldenSlot">
+                <option value="D">D班 18:00-22:00（默认黄金档）</option>
+                <option value="C">C班 14:00-18:00</option>
+                <option value="B">B班 10:00-14:00</option>
+                <option value="E">E班 22:00-02:00</option>
+                <option value="A">A班 06:00-10:00</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>优化核心目标</label>
+              <select id="rOptGoal">
+                <option value="gpm">GPM 最大化（场均成交金额）</option>
+                <option value="roi">千川ROI 最大化（付费转化）</option>
+                <option value="balance">综合均衡（GPM×ROI加权）</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group" style="margin-top:14px">
+            <label>补充排班策略说明（告诉AI你的特殊排班逻辑）</label>
+            <textarea id="rStrategy" placeholder="例：近期晚间流量明显更好，S级主播优先排D/E班；苑含笑擅长拉新，适合排A班起盘..."></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 特殊要求 -->
+    <div class="panel" id="panel-special">
+      <div class="panel-title">特殊要求 <span class="chip chip-red" style="font-size:12px;vertical-align:middle">必读</span></div>
+      <div class="panel-desc">精确录入本周的特殊排班限制。AI将100%强制执行所有特殊要求，并在此基础上推演剩余班次。</div>
+
+      <div class="inner-tabs">
+        <button class="inner-tab active" onclick="switchInnerTab('leave')">🏖 请假管理</button>
+        <button class="inner-tab" onclick="switchInnerTab('fixedOn')">📌 指定必须排班</button>
+        <button class="inner-tab" onclick="switchInnerTab('fixedOff')">🚫 指定不可排班</button>
+        <button class="inner-tab" onclick="switchInnerTab('restDay')">😴 指定休息日</button>
+        <button class="inner-tab" onclick="switchInnerTab('event')">🎯 大场/活动</button>
+      </div>
+
+      <!-- 请假 -->
+      <div class="inner-panel active" id="ipanel-leave">
+        <div class="alert alert-info">📌 请假：主播在指定日期整天不可排任何班次，AI将跳过该主播当天所有排班</div>
+        <div id="leaveList"></div>
+        <div class="card" style="padding:14px;margin-top:10px">
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+            <div class="form-group" style="flex:1;min-width:120px">
+              <label>主播</label>
+              <select id="leaveAnchor" style=""></select>
+            </div>
+            <div class="form-group" style="flex:1;min-width:130px">
+              <label>请假日期</label>
+              <input type="date" id="leaveDate" />
+            </div>
+            <div class="form-group" style="flex:2;min-width:160px">
+              <label>备注（原因）</label>
+              <input type="text" id="leaveNote" placeholder="如：有事请假、外出培训" />
+            </div>
+            <button class="btn btn-primary" onclick="addLeave()">＋ 添加请假</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 指定必须排班 -->
+      <div class="inner-panel" id="ipanel-fixedOn">
+        <div class="alert alert-info">📌 指定必须排班：在特定日期的特定班次，锁定必须安排某位主播，AI不可更改</div>
+        <div id="fixedOnList"></div>
+        <div class="card" style="padding:14px;margin-top:10px">
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+            <div class="form-group" style="flex:1;min-width:120px">
+              <label>主播</label>
+              <select id="fixedOnAnchor"></select>
+            </div>
+            <div class="form-group" style="min-width:130px">
+              <label>日期</label>
+              <input type="date" id="fixedOnDate" />
+            </div>
+            <div class="form-group" style="min-width:110px">
+              <label>班次</label>
+              <select id="fixedOnShift"></select>
+            </div>
+            <div class="form-group" style="flex:1;min-width:130px">
+              <label>原因</label>
+              <input type="text" id="fixedOnNote" placeholder="如：大场活动首发阵容" />
+            </div>
+            <button class="btn btn-primary" onclick="addFixedOn()">＋ 添加</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 指定不可排班 -->
+      <div class="inner-panel" id="ipanel-fixedOff">
+        <div class="alert alert-info">🚫 指定不可排班：主播在某日期的某班次不能上班（但当天其他班次可以），AI必须排除</div>
+        <div id="fixedOffList"></div>
+        <div class="card" style="padding:14px;margin-top:10px">
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+            <div class="form-group" style="flex:1;min-width:120px">
+              <label>主播</label>
+              <select id="fixedOffAnchor"></select>
+            </div>
+            <div class="form-group" style="min-width:130px">
+              <label>日期</label>
+              <input type="date" id="fixedOffDate" />
+            </div>
+            <div class="form-group" style="min-width:110px">
+              <label>不可排班次</label>
+              <select id="fixedOffShift"></select>
+            </div>
+            <div class="form-group" style="flex:1;min-width:130px">
+              <label>原因</label>
+              <input type="text" id="fixedOffNote" placeholder="如：有课、接送小孩" />
+            </div>
+            <button class="btn btn-primary" onclick="addFixedOff()">＋ 添加</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 指定休息日 -->
+      <div class="inner-panel" id="ipanel-restDay">
+        <div class="alert alert-info">😴 指定休息日：主播在特定日期强制全天休息，不安排任何班次（不占调休名额可单独标注）</div>
+        <div id="restDayList"></div>
+        <div class="card" style="padding:14px;margin-top:10px">
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+            <div class="form-group" style="flex:1;min-width:120px">
+              <label>主播</label>
+              <select id="restAnchor"></select>
+            </div>
+            <div class="form-group" style="min-width:130px">
+              <label>休息日期</label>
+              <input type="date" id="restDate" />
+            </div>
+            <div class="form-group" style="min-width:140px">
+              <label>类型</label>
+              <select id="restType">
+                <option value="counted">计入调休名额</option>
+                <option value="extra">不占调休（额外休息）</option>
+              </select>
+            </div>
+            <div class="form-group" style="flex:1;min-width:130px">
+              <label>备注</label>
+              <input type="text" id="restNote" placeholder="如：上周补班" />
+            </div>
+            <button class="btn btn-primary" onclick="addRestDay()">＋ 添加</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 大场/活动 -->
+      <div class="inner-panel" id="ipanel-event">
+        <div class="alert alert-info">🎯 大场/活动：指定某天为重要活动日，可强制要求多名主播同日上班或配置特别阵容</div>
+        <div id="eventList"></div>
+        <div class="card" style="padding:14px;margin-top:10px">
+          <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+            <div class="form-group" style="min-width:130px">
+              <label>活动日期</label>
+              <input type="date" id="eventDate" />
+            </div>
+            <div class="form-group" style="flex:1;min-width:150px">
+              <label>活动名称</label>
+              <input type="text" id="eventName" placeholder="如：618大促、品牌专场" />
+            </div>
+            <div class="form-group" style="flex:2;min-width:200px">
+              <label>指定必须上班的主播（可多选）</label>
+              <input type="text" id="eventAnchors" placeholder="如：邹楠楠,赵颢棋（逗号分隔）" />
+            </div>
+            <div class="form-group" style="min-width:110px">
+              <label>指定班次</label>
+              <select id="eventShift">
+                <option value="">不限班次</option>
+              </select>
+            </div>
+            <button class="btn btn-primary" onclick="addEvent()">＋ 添加活动</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="action-bar" style="margin-top:20px">
+        <button class="btn btn-ghost" onclick="clearAllSpecial()">🗑 清空所有特殊要求</button>
+        <span id="specialSummary" style="font-size:12px;color:var(--text3)"></span>
+      </div>
+    </div>
+
+    <!-- 绩效数据 -->
+    <div class="panel" id="panel-data">
+      <div class="panel-title">绩效数据 &amp; 评级配置</div>
+      <div class="panel-desc">上传数据后，识别字段 → 选择评级维度 → 配置评判规则 → 一键评级。未配置时自动按默认规则评级。</div>
+
+      <!-- STEP 1: 上传 -->
+      <div class="section">
+        <div class="section-header">
+          <span class="step-badge">1</span>
+          <span class="section-title">上传数据文件</span>
+          <div class="section-line"></div>
+        </div>
+        <div class="upload-zone" onclick="document.getElementById('fileInput').click()" id="uploadZone">
+          <div class="upload-icon">📂</div>
+          <div class="upload-text">点击上传 CSV / Excel 文件</div>
+          <div class="upload-sub">支持 .csv / .xlsx / .xls · 上传后自动识别所有字段</div>
+        </div>
+        <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" style="display:none" onchange="handleFile(event)" />
+        <div id="fileInfo" style="display:none;margin-top:10px" class="alert alert-success"></div>
+      </div>
+
+      <!-- STEP 2: 字段选择 -->
+      <div class="section" id="fieldSelectSection" style="display:none">
+        <div class="section-header">
+          <span class="step-badge">2</span>
+          <span class="section-title">选择评级维度字段</span>
+          <div class="section-line"></div>
+          <span style="font-size:12px;color:var(--text3);margin-left:8px">已识别 <span id="totalFieldCount">0</span> 个字段</span>
+        </div>
+        <div class="alert alert-info" style="margin-bottom:12px">
+          📋 从下方选择用于评定主播等级的字段（可多选）。未选择则使用系统默认字段。
+        </div>
+        <div id="fieldGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:14px"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" onclick="selectRecommendedFields()">⭐ 一键选推荐字段</button>
+          <button class="btn btn-ghost btn-sm" onclick="clearFieldSelection()">✕ 清空选择</button>
+          <span id="selectedFieldCount" style="font-size:12px;color:var(--accent2);line-height:32px;margin-left:4px"></span>
+        </div>
+      </div>
+
+      <!-- STEP 3: 评判规则 -->
+      <div class="section" id="ruleSection" style="display:none">
+        <div class="section-header">
+          <span class="step-badge">3</span>
+          <span class="section-title">评判规则 &amp; 权重配置</span>
+          <div class="section-line"></div>
+        </div>
+        <div class="card" style="padding:16px;margin-bottom:12px">
+          <div id="fieldWeightRows" style="margin-bottom:14px"></div>
+          <div class="form-group">
+            <label style="font-size:12px;color:var(--text2)">自定义评判逻辑说明（可选，描述你的特殊规则）</label>
+            <textarea id="ruleLogicText" placeholder="例：GPM是最重要指标，权重最高；ROI其次；转化率作为辅助参考。S级需要GPM排名前20%且ROI高于均值，C级为GPM后20%或ROI低于6..." style="min-height:90px"></textarea>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+            <button class="btn btn-primary" onclick="runRating()">🤖 按规则评级</button>
+            <button class="btn btn-ghost" onclick="clearRuleConfig()">🗑 清除规则</button>
+            <button class="btn btn-ghost" onclick="saveRuleConfig()">💾 保存规则</button>
+          </div>
+        </div>
+        <div id="ruleConfigStatus" style="font-size:12px;color:var(--text3);margin-top:4px"></div>
+      </div>
+
+      <!-- STEP 4: 评级结果预览 -->
+      <div class="section">
+        <div class="section-header">
+          <span class="step-badge">4</span>
+          <span class="section-title">主播评级结果</span>
+          <div class="section-line"></div>
+        </div>
+        <div id="manualRatings"></div>
+      </div>
+
+      <!-- 补充说明 -->
+      <div class="section">
+        <div class="section-header"><span class="section-title">补充说明</span><div class="section-line"></div></div>
+        <div class="form-group">
+          <textarea id="dataNote" placeholder="告诉AI近期数据趋势或特殊情况，如：近两周D班流量最好，赵颢棋ROI持续高位..." style="min-height:80px"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- 生成排班 -->
+    <div class="panel" id="panel-generate">
+      <div class="panel-title">生成排班</div>
+      <div class="panel-desc">配置排班周期，确认信息无误后点击生成。AI将综合所有设置和特殊要求，推演最优方案。</div>
+
+      <div class="week-nav">
+        <button class="week-btn" onclick="changeWeek(-1)">‹</button>
+        <div class="week-label" id="weekLabel">加载中...</div>
+        <button class="week-btn" onclick="changeWeek(1)">›</button>
+      </div>
+
+      <div class="stats-grid" id="configStats"></div>
+
+      <div class="section">
+        <div class="section-header"><span class="section-title">当前特殊要求预览</span><div class="section-line"></div></div>
+        <div id="specialPreview"></div>
+      </div>
+
+      <div class="alert alert-warn" id="apiWarning" style="display:none">
+        ⚠️ 未配置 API Key，无法调用AI生成排班。请在左侧边栏选择服务商并填入 API Key。
+      </div>
+
+      <div style="text-align:center;padding:20px 0">
+        <button class="btn btn-primary" onclick="generateSchedule()" style="padding:14px 40px;font-size:15px;border-radius:12px">
+          🤖 AI 智能生成排班
+        </button>
+        <div style="font-size:12px;color:var(--text3);margin-top:10px">将调用 Claude Sonnet API · 约10-20秒</div>
+      </div>
+    </div>
+
+    <!-- 排班结果 -->
+    <div class="panel" id="panel-result">
+      <div class="panel-title">排班结果</div>
+      <div id="resultContent">
+        <div style="text-align:center;padding:60px 20px;color:var(--text3)">
+          <div style="font-size:48px;margin-bottom:16px">📋</div>
+          <div style="font-size:15px">暂无排班结果</div>
+          <div style="font-size:13px;margin-top:6px">请先前往「生成排班」页面生成</div>
+          <button class="btn btn-primary" onclick="gotoPanel('generate')" style="margin-top:20px">去生成排班</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// ========== STATE ==========
+let anchors = [
+  {name:"邹楠楠",rating:"S"},
+  {name:"赵颢棋",rating:"A"},
+  {name:"苑含笑",rating:"A"},
+  {name:"乔莹",rating:"B"},
+  {name:"范晓晶",rating:"B"},
+  {name:"张新",rating:"B"},
+  {name:"熊怡芯",rating:"C"}
+];
+let shifts = [
+  {id:"A",name:"A班",start:"06:00",end:"10:00"},
+  {id:"B",name:"B班",start:"10:00",end:"14:00"},
+  {id:"C",name:"C班",start:"14:00",end:"18:00"},
+  {id:"D",name:"D班",start:"18:00",end:"22:00"},
+  {id:"E",name:"E班",start:"22:00",end:"02:00"}
+];
+let special = {
+  leaves: [],      // {anchor, date, note}
+  fixedOn: [],     // {anchor, date, shiftId, note}
+  fixedOff: [],    // {anchor, date, shiftId, note}
+  restDays: [],    // {anchor, date, type, note}
+  events: []       // {date, name, anchors[], shiftId, note}
+};
+let weekOffset = 0;
+let lastResult = null;
+
+// ========== PROVIDER CONFIG ==========
+const PROVIDERS = {
+  anthropic: {
+    label: 'Anthropic',
+    baseUrl: 'https://api.anthropic.com/v1/messages',
+    models: ['claude-haiku-4-5-20251001','claude-sonnet-4-20250514','claude-opus-4-20250514'],
+    format: 'anthropic',
+    keyHint: 'sk-ant-...',
+    keyCheck: k => k.startsWith('sk-ant-') && k.length > 20
+  },
+  siliconflow: {
+    label: '硅基流动',
+    baseUrl: 'https://api.siliconflow.cn/v1/chat/completions',
+    models: ['Qwen/Qwen3-7B','Qwen/Qwen3-8B','Pro/Qwen/Qwen3-8B','Qwen/Qwen3-14B','Qwen/Qwen3-32B','deepseek-ai/DeepSeek-V3','Pro/deepseek-ai/DeepSeek-V3'],
+    format: 'openai',
+    keyHint: 'sk-...',
+    keyCheck: k => k.startsWith('sk-') && k.length > 10
+  },
+  yunwu: {
+    label: '云雾API',
+    baseUrl: '',
+    models: ['gpt-4o','gpt-4o-mini','claude-3-5-sonnet-20241022','claude-3-5-haiku-20241022','deepseek-chat','deepseek-v3','gemini-1.5-pro'],
+    format: 'copy',
+    keyHint: '无需填写Key',
+    keyCheck: function(k){ return true; }
+  },
+  openai: {
+    label: '自定义地址',
+    baseUrl: 'https://yunwu.ai/v1/chat/completions',
+    models: ['gpt-4o','gpt-4o-mini','claude-3-5-sonnet-20241022','claude-3-5-haiku-20241022','deepseek-chat','deepseek-reasoner','gemini-1.5-pro','gpt-4o-mini'],
+    format: 'openai',
+    keyHint: 'sk-...',
+    keyCheck: k => k.length > 10
+  }
+};
+
+function onProviderChange(){
+  const p = document.getElementById('apiProvider').value;
+  const cfg = PROVIDERS[p];
+  const modelSel = document.getElementById('modelSelect');
+  modelSel.innerHTML = cfg.models.map(m=>`<option value="${m}">${m}</option>`).join('');
+  document.getElementById('apiKeyInput').placeholder = cfg.keyHint;
+  document.getElementById('customBaseUrlWrap').style.display = (p==='openai') ? 'block' : 'none';
+  var isYunwu = (p === 'yunwu');
+  var apiInputWrap = document.querySelector('.api-input-wrap');
+  if(apiInputWrap) apiInputWrap.style.display = isYunwu ? 'none' : '';
+  var cw = document.getElementById('corsWarning');
+  if(cw) cw.style.display = isYunwu ? 'block' : 'none';
+  if(isYunwu){
+    var cw2 = document.getElementById('corsWarning');
+    if(cw2) cw2.innerHTML = '📋 云雾不支持浏览器直连。选此模式后，点「生成排班」会<strong style="color:#8b84ff">复制Prompt</strong>，粘贴到云雾官网/Cherry Studio即可。';
+    var st = document.getElementById('apiStatus');
+    if(st){ st.textContent='复制Prompt模式 · 无需填Key'; st.style.color='var(--accent2)'; }
+    var dot = document.getElementById('apiDot');
+    if(dot) dot.className='api-dot on';
+  }
+  onApiKeyInput();
+}
+
+function onApiKeyInput(){
+  const key = document.getElementById('apiKeyInput').value.trim();
+  const provider = document.getElementById('apiProvider').value;
+  const cfg = PROVIDERS[provider];
+  const dot = document.getElementById('apiDot');
+  const status = document.getElementById('apiStatus');
+  if(key.length > 0 && cfg.keyCheck(key)){
+    dot.className = 'api-dot on';
+    status.textContent = '✓ 已配置 · 可以生成排班';
+    status.style.color = 'var(--green)';
+  } else if(key.length > 0) {
+    dot.className = 'api-dot';
+    status.textContent = 'Key格式不符，请确认';
+    status.style.color = 'var(--red)';
+  } else {
+    dot.className = 'api-dot';
+    status.textContent = '未配置 · 生成排班需要此Key';
+    status.style.color = '';
+    var rg = document.getElementById('regGuide');
+    if(rg) rg.style.display = (key.length === 0) ? 'block' : 'none';
+  }
+}
+function toggleApiVis(){
+  const inp = document.getElementById('apiKeyInput');
+  inp.type = inp.type==='password' ? 'text' : 'password';
+}
+function getApiKey(){ return document.getElementById('apiKeyInput').value.trim(); }
+function getProvider(){ return document.getElementById('apiProvider').value; }
+function getModel(){ return document.getElementById('modelSelect').value; }
+function getBaseUrl(){
+  const p = getProvider();
+  if(p==='openai'){
+    const u = document.getElementById('customBaseUrl').value.trim();
+    return u || 'https://api.openai.com/v1/chat/completions';
+  }
+  return PROVIDERS[p].baseUrl;
+}
+
+async function callLLM(systemPrompt, userPrompt, maxTokens=2000){
+  const key = getApiKey();
+  const provider = getProvider();
+  const model = getModel();
+  const baseUrl = getBaseUrl();
+  const format = PROVIDERS[provider].format;
+
+  if(format === 'anthropic'){
+    const resp = await fetch(baseUrl, {
+      method:'POST',
+      mode:'cors',
+      headers:{
+        'Content-Type':'application/json',
+        'x-api-key': key,
+        'anthropic-version':'2023-06-01',
+        'anthropic-dangerous-direct-browser-access':'true'
+      },
+      body: JSON.stringify({
+        model, max_tokens: maxTokens,
+        messages:[{role:'user', content: systemPrompt+'\n\n'+userPrompt}]
+      })
+    });
+    if(!resp.ok){
+      const errText = await resp.text().catch(()=>'');
+      throw new Error('HTTP '+resp.status+': '+errText.slice(0,200));
+    }
+    const data = await resp.json();
+    if(data.error) throw new Error(data.error.message||JSON.stringify(data.error));
+    return data.content.map(i=>i.text||'').join('');
+  } else {
+    // OpenAI-compatible (SiliconFlow, DeepSeek, etc.)
+    const resp = await fetch(baseUrl, {
+      method:'POST',
+      mode:'cors',
+      headers:{
+        'Content-Type':'application/json',
+        'Authorization': 'Bearer '+key
+      },
+      body: JSON.stringify({
+        model, max_tokens: maxTokens,
+        messages:[
+          {role:'system', content: systemPrompt},
+          {role:'user', content: userPrompt}
+        ]
+      })
+    });
+    if(!resp.ok){
+      const errText = await resp.text().catch(()=>'');
+      throw new Error('HTTP '+resp.status+': '+errText.slice(0,200));
+    }
+    const data = await resp.json();
+    if(data.error) throw new Error(data.error.message||JSON.stringify(data.error));
+    const choice = data.choices&&data.choices[0];
+    if(!choice) throw new Error('返回数据异常：'+JSON.stringify(data));
+    return choice.message?.content || choice.delta?.content || '';
+  }
+}
+
+
+// ========== FIELD SELECTOR & RATING ENGINE ==========
+// 全局: 上传后的原始数据
+let _uploadedHeaders = [];
+let _uploadedRows = [];
+let _uploadedStats = {};      // {姓名: {n, fields:{字段名:[values]}}}
+let _selectedFields = [];     // 用户勾选的字段名列表
+let _fieldWeights = {};       // {字段名: {weight:1-5, direction:'higher'|'lower'}}
+let _savedRule = null;
+
+// 推荐字段关键词（匹配到的字段高亮显示推荐标）
+const RECOMMENDED_KEYWORDS = ['GPM','千川ROI','转化率','成交金额','销售额','场次成交','UV价值','直播间成交'];
+const DEFAULT_FIELDS_KEYWORDS = ['GPM','千川ROI','成交转化率','直播间成交'];
+
+function isRecommended(h){ return RECOMMENDED_KEYWORDS.some(k=>h.includes(k)); }
+function isDefault(h){ return DEFAULT_FIELDS_KEYWORDS.some(k=>h.includes(k)); }
+function isNumericCol(colIdx, rows){
+  let numCount=0;
+  for(let i=0;i<Math.min(rows.length,20);i++){
+    const v=rows[i][colIdx];
+    if(v===''||v===null||v===undefined) continue;
+    const n=parseFloat(String(v).replace(/[%,，¥]/g,''));
+    if(!isNaN(n)) numCount++;
+  }
+  return numCount >= 2;
+}
+
+// 上传后渲染字段选择器
+function renderFieldSelector(headers, rows){
+  _uploadedHeaders = headers;
+  _uploadedRows = rows;
+
+  // 只显示数值列（排除姓名/日期/文字列）
+  const numericHeaders = headers
+    .map((h,i)=>({h,i}))
+    .filter(({h,i})=>isNumericCol(i,rows) && !['姓名','日期','月','日','小时','分钟','时段','班次','运营','渠道','结论','星期','周'].some(k=>h.includes(k)));
+
+  document.getElementById('totalFieldCount').textContent = numericHeaders.length;
+  document.getElementById('fieldSelectSection').style.display='';
+  document.getElementById('ruleSection').style.display='';
+
+  const grid = document.getElementById('fieldGrid');
+  grid.innerHTML = numericHeaders.map(({h})=>{
+    const rec = isRecommended(h);
+    const sel = _selectedFields.includes(h);
+    return `<div class="field-chip${rec?' recommended':''}${sel?' selected':''}" onclick="toggleField('${h.replace(/'/g,"\\'")}',this)">
+      <span>${h}</span>
+      ${rec?'<span class="fc-tag">推荐</span>':''}
+    </div>`;
+  }).join('');
+
+  updateSelectedCount();
+  // 如果没有已选字段，自动勾选推荐字段
+  if(_selectedFields.length===0) selectRecommendedFields();
+  // 渲染权重行
+  renderWeightRows();
+  // 加载已保存规则
+  loadSavedRule();
+}
+
+function toggleField(fieldName, el){
+  const idx = _selectedFields.indexOf(fieldName);
+  if(idx>=0){ _selectedFields.splice(idx,1); el.classList.remove('selected'); }
+  else { _selectedFields.push(fieldName); el.classList.add('selected'); }
+  updateSelectedCount();
+  renderWeightRows();
+}
+
+function selectRecommendedFields(){
+  // 先清空
+  _selectedFields=[];
+  document.querySelectorAll('.field-chip').forEach(el=>el.classList.remove('selected'));
+  // 勾选推荐
+  document.querySelectorAll('.field-chip').forEach(el=>{
+    const name = el.querySelector('span:first-child').textContent;
+    if(isRecommended(name)){ _selectedFields.push(name); el.classList.add('selected'); }
+  });
+  updateSelectedCount();
+  renderWeightRows();
+}
+
+function clearFieldSelection(){
+  _selectedFields=[];
+  document.querySelectorAll('.field-chip').forEach(el=>el.classList.remove('selected'));
+  updateSelectedCount();
+  renderWeightRows();
+}
+
+function updateSelectedCount(){
+  const el=document.getElementById('selectedFieldCount');
+  if(el) el.textContent = _selectedFields.length>0 ? `已选 ${_selectedFields.length} 个字段` : '未选择 · 将使用默认字段';
+}
+
+function renderWeightRows(){
+  const container = document.getElementById('fieldWeightRows');
+  if(!container) return;
+  const fields = _selectedFields.length>0 ? _selectedFields : [];
+  if(fields.length===0){
+    container.innerHTML='<div style="font-size:13px;color:var(--text3);padding:6px 0">未选择字段，将使用默认规则（GPM + ROI + 转化率）自动评级</div>';
+    return;
+  }
+  container.innerHTML = `<div style="display:grid;grid-template-columns:140px 1fr 60px 80px;gap:10px;padding:0 12px;margin-bottom:6px;font-size:11px;color:var(--text3)">
+    <span>字段名</span><span>权重</span><span>占比</span><span>方向</span></div>`
+  + fields.map(f=>{
+    if(!_fieldWeights[f]) _fieldWeights[f]={weight:3, direction:'higher'};
+    const w=_fieldWeights[f];
+    return `<div class="weight-row">
+      <span class="wname" title="${f}">${f}</span>
+      <input type="range" min="1" max="5" step="1" value="${w.weight}"
+        oninput="updateWeight('${f.replace(/'/g,"\\'")}',+this.value)" />
+      <span class="wval" id="wv_${fields.indexOf(f)}">${w.weight}</span>
+      <select onchange="updateDirection('${f.replace(/'/g,"\\'")}',this.value)">
+        <option value="higher"${w.direction==='higher'?' selected':''}>越高越好</option>
+        <option value="lower"${w.direction==='lower'?' selected':''}>越低越好</option>
+      </select>
+    </div>`;
+  }).join('');
+}
+
+function updateWeight(f, val){
+  if(!_fieldWeights[f]) _fieldWeights[f]={weight:3,direction:'higher'};
+  _fieldWeights[f].weight=val;
+  // 更新显示值
+  const fields=_selectedFields;
+  const idx=fields.indexOf(f);
+  const el=document.getElementById('wv_'+idx);
+  if(el) el.textContent=val;
+}
+function updateDirection(f,val){
+  if(!_fieldWeights[f]) _fieldWeights[f]={weight:3,direction:'higher'};
+  _fieldWeights[f].direction=val;
+}
+
+function saveRuleConfig(){
+  _savedRule={
+    fields:[..._selectedFields],
+    weights:{..._fieldWeights},
+    logic: document.getElementById('ruleLogicText').value.trim()
+  };
+  localStorage.setItem('scheduleRuleConfig', JSON.stringify(_savedRule));
+  document.getElementById('ruleConfigStatus').textContent='✅ 规则已保存（下次打开自动加载）';
+  setTimeout(()=>{ document.getElementById('ruleConfigStatus').textContent=''; },3000);
+}
+
+function loadSavedRule(){
+  try {
+    const saved = localStorage.getItem('scheduleRuleConfig');
+    if(!saved) return;
+    _savedRule = JSON.parse(saved);
+    if(_savedRule.fields && _savedRule.fields.length>0){
+      _selectedFields = _savedRule.fields.filter(f=>_uploadedHeaders.includes(f));
+      _fieldWeights = _savedRule.weights || {};
+      if(_savedRule.logic) document.getElementById('ruleLogicText').value=_savedRule.logic;
+      // 更新 chip 选中状态
+      document.querySelectorAll('.field-chip').forEach(el=>{
+        const name=el.querySelector('span:first-child').textContent;
+        el.classList.toggle('selected', _selectedFields.includes(name));
+      });
+      updateSelectedCount();
+      renderWeightRows();
+      document.getElementById('ruleConfigStatus').textContent='📂 已加载上次保存的规则';
+    }
+  } catch(e){}
+}
+
+function clearRuleConfig(){
+  _savedRule=null;
+  _selectedFields=[];
+  _fieldWeights={};
+  localStorage.removeItem('scheduleRuleConfig');
+  document.querySelectorAll('.field-chip').forEach(el=>el.classList.remove('selected'));
+  document.getElementById('ruleLogicText').value='';
+  document.getElementById('ruleConfigStatus').textContent='🗑 规则已清除';
+  updateSelectedCount();
+  renderWeightRows();
+  setTimeout(()=>{ document.getElementById('ruleConfigStatus').textContent=''; },2000);
+}
+
+// ── 核心：按配置字段统计主播均值 ──
+function buildStatsFromConfig(){
+  const nameCol = _uploadedHeaders.findIndex(h=>h.includes('主播姓名'));
+  if(nameCol<0) return {};
+
+  const fieldsToUse = _selectedFields.length>0
+    ? _selectedFields
+    : _uploadedHeaders.filter(h=>isDefault(h));
+
+  const colIdxMap = {};
+  fieldsToUse.forEach(f=>{
+    const idx=_uploadedHeaders.indexOf(f);
+    if(idx>=0) colIdxMap[f]=idx;
+  });
+
+  const stats={};
+  _uploadedRows.forEach(row=>{
+    const name=String(row[nameCol]||'').trim();
+    if(!name) return;
+    if(!stats[name]){stats[name]={n:0,fields:{}}; fieldsToUse.forEach(f=>{stats[name].fields[f]=[];});}
+    stats[name].n++;
+    Object.entries(colIdxMap).forEach(([f,ci])=>{
+      const v=parseFloat(String(row[ci]||'').replace(/[%,，¥]/g,''));
+      if(!isNaN(v)) stats[name].fields[f].push(v);
+    });
+  });
+  return {stats, fieldsToUse};
+}
+
+// ── 按权重计算综合得分，自动评级 ──
+async function runRating(){
+  if(!_uploadedRows.length){ alert('请先上传数据文件'); return; }
+
+  const {stats, fieldsToUse} = buildStatsFromConfig();
+  const avg=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;
+
+  // 计算每个主播在每个字段的均值
+  const anchorScores={};
+  Object.entries(stats).forEach(([name,d])=>{
+    anchorScores[name]={};
+    fieldsToUse.forEach(f=>{ anchorScores[name][f]=avg(d.fields[f]); });
+  });
+
+  // 计算每个字段的全局均值和标准差（用于 z-score 标准化）
+  const fieldMeta={};
+  fieldsToUse.forEach(f=>{
+    const allVals=Object.values(anchorScores).map(s=>s[f]).filter(v=>v!==null);
+    const mean=allVals.length?allVals.reduce((a,b)=>a+b,0)/allVals.length:0;
+    const std=allVals.length>1?Math.sqrt(allVals.map(v=>(v-mean)**2).reduce((a,b)=>a+b,0)/allVals.length):1;
+    fieldMeta[f]={mean, std:Math.max(std,0.001)};
+  });
+
+  // 计算加权综合分
+  const composite={};
+  Object.entries(anchorScores).forEach(([name,fscores])=>{
+    let totalW=0, totalScore=0;
+    fieldsToUse.forEach(f=>{
+      const val=fscores[f];
+      if(val===null) return;
+      const w=(_fieldWeights[f]&&_fieldWeights[f].weight)||3;
+      const dir=(_fieldWeights[f]&&_fieldWeights[f].direction)||'higher';
+      const z=(val-fieldMeta[f].mean)/fieldMeta[f].std;
+      totalScore += (dir==='higher'?z:-z)*w;
+      totalW+=w;
+    });
+    composite[name]=totalW>0?totalScore/totalW:0;
+  });
+
+  const scores=Object.values(composite).sort((a,b)=>b-a);
+  const top20=scores[Math.floor(scores.length*0.2)]??Infinity;
+  const top50=scores[Math.floor(scores.length*0.5)]??Infinity;
+  const bot20=scores[Math.floor(scores.length*0.8)]??-Infinity;
+
+  // 如果有自定义规则文字 + API Key，让AI二次校准
+  const ruleText=document.getElementById('ruleLogicText').value.trim();
+  const key=getApiKey();
+  let aiRatings=null;
+
+  if(ruleText && key){
+    // 构建摘要送AI
+    const summaryLines=Object.entries(anchorScores).map(([name,fscores])=>{
+      const parts=fieldsToUse.map(f=>`${f}:${fscores[f]!==null?fscores[f].toFixed(1):'N/A'}`);
+      return `${name}|${parts.join('|')}|综合得分:${(composite[name]||0).toFixed(2)}`;
+    }).join('\n');
+
+    try {
+      const sp='你是直播数据分析师。只输出JSON，不要任何解释和代码块标记。';
+      const up=`主播绩效摘要：\n${summaryLines}\n\n用户自定义评判规则：${ruleText}\n\n花名册：${anchors.map(a=>a.name).join('、')}\n\n按用户规则结合数据，评定S/A/B/C级，不在摘要中的主播评B。\n只输出JSON：{"ratings":{"姓名":{"rating":"S","reason":"说明"}}}`;
+      const rt=await callLLM(sp,up,800);
+      const parsed=JSON.parse(rt.replace(/```json[\s\S]*?```|```/g,'').trim());
+      aiRatings=parsed.ratings;
+    } catch(e){ /* 失败则降级到本地得分 */ }
+  }
+
+  // 写入评级
+  let updatedCount=0;
+  anchors.forEach((a,i)=>{
+    // 优先用AI结果
+    if(aiRatings&&aiRatings[a.name]&&['S','A','B','C'].includes(aiRatings[a.name].rating)){
+      anchors[i].rating=aiRatings[a.name].rating;
+      anchors[i].ratingSource='ai-rule';
+      anchors[i].ratingReason=aiRatings[a.name].reason||'';
+      updatedCount++;
+      return;
+    }
+    // 本地得分评级
+    const score=composite[a.name];
+    if(score===undefined) return;
+    let rating, reason;
+    if(score>=top20){rating='S';reason='综合得分 Top 20%';}
+    else if(score>=top50){rating='A';reason='综合得分 Top 50%';}
+    else if(score>=bot20){rating='B';reason='综合得分中等';}
+    else {rating='C';reason='综合得分后 20%';}
+    // 追加各字段均值
+    const details=fieldsToUse.map(f=>{
+      const v=anchorScores[a.name]&&anchorScores[a.name][f];
+      return v!==null&&v!==undefined?`${f} ${v.toFixed(1)}`:'';
+    }).filter(Boolean).join(' · ');
+    anchors[i].rating=rating;
+    anchors[i].ratingSource='rule';
+    anchors[i].ratingReason=`得分${(score||0).toFixed(2)} · ${reason}${details?' · '+details:''}`;
+    updatedCount++;
+  });
+
+  window._anchorStats=stats;
+  window._dataSummary=Object.entries(anchorScores).map(([name,fs])=>{
+    return name+'|'+fieldsToUse.map(f=>`${f}${fs[f]!==null?fs[f].toFixed(0):'N/A'}`).join('|');
+  }).join('\n');
+
+  renderManualRatings(aiRatings);
+  renderAnchorList();
+  refreshAllSelects();
+  document.getElementById('ruleConfigStatus').textContent=`✅ 评级完成，${updatedCount}位主播已更新（${ruleText&&key?'AI规则':'本地加权'}模式）`;
+}
+
+
+// ========== NAVIGATION ==========
+function gotoPanel(id){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('panel-'+id).classList.add('active');
+  document.getElementById('nav-'+id).classList.add('active');
+  if(id==='generate') refreshGeneratePage();
+  if(id==='special') refreshSpecialSelects();
+  if(id==='data') renderManualRatings();
+}
+
+function switchInnerTab(tab){
+  document.querySelectorAll('.inner-tab').forEach((t,i)=>{
+    const ids=['leave','fixedOn','fixedOff','restDay','event'];
+    t.classList.toggle('active', ids[i]===tab);
+  });
+  document.querySelectorAll('.inner-panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('ipanel-'+tab).classList.add('active');
+}
+
+// ========== ANCHORS ==========
+function renderAnchorList(){
+  const ratingColors = {S:'gold',A:'accent',B:'green',C:'gray'};
+  const ratingLabels = {S:'S · 顶尖',A:'A · 优秀',B:'B · 良好',C:'C · 普通'};
+  const active = anchors.filter(a=>!a.disabled);
+  const disabled = anchors.filter(a=>a.disabled);
+  let html = anchors.map((a,i)=>`
+    <div class="anchor-row" style="${a.disabled?'opacity:0.45;':''}">
+      <div class="anchor-avatar" style="${a.disabled?'background:rgba(255,255,255,0.05);color:var(--text3)':''}">
+        ${a.name.slice(0,1)}
+      </div>
+      <div class="anchor-info">
+        <div class="anchor-name-text">${a.name}${a.disabled?' <span style="font-size:11px;color:var(--text3)">(已停用)</span>':''}</div>
+        <div class="anchor-meta">${a.ratingSource==='ai'||a.ratingSource==='rule'||a.ratingSource==='ai-rule'?'🤖 AI/规则评级':'手动设置'}</div>
+      </div>
+      <div class="rating-group" style="${a.disabled?'pointer-events:none;opacity:0.5':''}">
+        ${['S','A','B','C'].map(r=>`
+          <button class="rating-btn ${a.rating===r?'sel-'+r:''}" onclick="setRating(${i},'${r}')">${r}</button>
+        `).join('')}
+      </div>
+      <span class="chip chip-${ratingColors[a.rating]}" style="margin-left:8px">${ratingLabels[a.rating]}</span>
+      <div style="display:flex;gap:5px;margin-left:6px;flex-shrink:0">
+        <button class="btn btn-ghost btn-sm" onclick="toggleAnchor(${i})" style="font-size:11px;padding:4px 10px;min-width:44px">
+          ${a.disabled?'启用':'停用'}
+        </button>
+        <button class="btn btn-danger btn-sm btn-icon" onclick="deleteAnchor(${i})" title="永久删除">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+        </button>
+      </div>
+    </div>`).join('');
+  if(disabled.length>0){
+    html += `<div style="font-size:11px;color:var(--text3);margin-top:6px;padding:0 4px">
+      ℹ️ 停用的主播不参与本周排班，但数据保留。删除则永久移除。
+    </div>`;
+  }
+  document.getElementById('anchorList').innerHTML = html;
+  document.getElementById('anchorCount').textContent =
+    `${active.length}人参与排班${disabled.length>0?' · '+disabled.length+'人停用':''}`;
+}
+function addAnchor(){
+  const n = document.getElementById('newAnchorName').value.trim();
+  const r = document.getElementById('newAnchorRating').value;
+  if(!n) return;
+  if(anchors.find(a=>a.name===n)){alert('主播已存在');return;}
+  anchors.push({name:n, rating:r, disabled:false, ratingSource:'manual'});
+  document.getElementById('newAnchorName').value='';
+  renderAnchorList();
+  refreshAllSelects();
+}
+function toggleAnchor(i){
+  anchors[i].disabled = !anchors[i].disabled;
+  renderAnchorList();
+  refreshAllSelects();
+  // 同步刷新生成排班页统计
+  if(document.getElementById('panel-generate').classList.contains('active')) refreshGeneratePage();
+}
+function deleteAnchor(i){
+  anchors.splice(i,1);
+  renderAnchorList();
+  refreshAllSelects();
+  if(document.getElementById('panel-generate').classList.contains('active')) refreshGeneratePage();
+}
+function setRating(i,r){ anchors[i].rating=r; anchors[i].ratingSource='manual'; renderAnchorList(); }
+
+// ========== SHIFTS ==========
+function renderShiftList(){
+  const html = shifts.map((s,i)=>`
+    <div class="shift-row">
+      <div class="shift-badge">${s.id}</div>
+      <div style="flex:1">
+        <span style="font-weight:600">${s.name}</span>
+        <span style="color:var(--text2);margin-left:10px;font-size:13px">${s.start} – ${s.end}</span>
+      </div>
+      <button class="btn btn-danger btn-sm btn-icon" onclick="removeShift(${i})">✕</button>
+    </div>`).join('');
+  document.getElementById('shiftList').innerHTML = html;
+  refreshShiftSelects();
+}
+function addShift(){
+  const name=document.getElementById('newShiftName').value.trim();
+  const start=document.getElementById('newShiftStart').value;
+  const end=document.getElementById('newShiftEnd').value;
+  if(!name||!start||!end){alert('请填写完整');return;}
+  const id=name.replace(/[^A-Za-z0-9]/g,'').substring(0,3)||'X'+shifts.length;
+  shifts.push({id,name,start,end});
+  document.getElementById('newShiftName').value='';
+  renderShiftList();
+}
+function removeShift(i){ shifts.splice(i,1); renderShiftList(); }
+
+// ========== SPECIAL REQUIREMENTS ==========
+function refreshSpecialSelects(){
+  ['leaveAnchor','fixedOnAnchor','fixedOffAnchor','restAnchor'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el) return;
+    el.innerHTML=anchors.filter(a=>!a.disabled).map(a=>`<option value="${a.name}">${a.name}</option>`).join('');
+  });
+  ['fixedOnShift','fixedOffShift','eventShift'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(!el) return;
+    const prefix = id==='eventShift'?'<option value="">不限班次</option>':'';
+    el.innerHTML=prefix+shifts.map(s=>`<option value="${s.id}">${s.name} ${s.start}-${s.end}</option>`).join('');
+  });
+  renderAllSpecialLists();
+}
+function refreshAllSelects(){ refreshSpecialSelects(); refreshShiftSelects(); }
+function refreshShiftSelects(){
+  const el=document.getElementById('rGoldenSlot');
+  if(el) el.innerHTML=shifts.map(s=>`<option value="${s.id}">${s.name} ${s.start}-${s.end}</option>`).join('');
+}
+
+function renderAllSpecialLists(){
+  renderLeaveList(); renderFixedOnList(); renderFixedOffList(); renderRestDayList(); renderEventList();
+  updateSpecialBadge();
+}
+
+function updateSpecialBadge(){
+  const total = special.leaves.length+special.fixedOn.length+special.fixedOff.length+special.restDays.length+special.events.length;
+  const badge = document.getElementById('specialBadge');
+  if(total>0){ badge.style.display=''; badge.textContent=total; } else { badge.style.display='none'; }
+  const summary = document.getElementById('specialSummary');
+  if(summary) summary.textContent = total>0 ? `共 ${total} 条特殊要求已录入` : '暂无特殊要求';
+}
+
+// Leave
+function addLeave(){
+  const anchor=document.getElementById('leaveAnchor').value;
+  const date=document.getElementById('leaveDate').value;
+  const note=document.getElementById('leaveNote').value.trim();
+  if(!anchor||!date){alert('请选择主播和日期');return;}
+  special.leaves.push({anchor,date,note});
+  document.getElementById('leaveDate').value='';
+  document.getElementById('leaveNote').value='';
+  renderAllSpecialLists();
+}
+function renderLeaveList(){
+  const el=document.getElementById('leaveList');
+  el.innerHTML=special.leaves.map((l,i)=>`
+    <div class="rule-card">
+      <div class="rule-header">
+        <span class="chip chip-red">🏖 请假</span>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="removeSpecial('leaves',${i})">✕</button>
+      </div>
+      <div style="font-size:13px"><strong>${l.anchor}</strong> · ${l.date} · 全天请假
+        ${l.note?`<span style="color:var(--text3);margin-left:8px">${l.note}</span>`:''}
+      </div>
+    </div>`).join('') || '<div style="color:var(--text3);font-size:13px;padding:8px 0">暂无请假记录</div>';
+}
+
+// Fixed On
+function addFixedOn(){
+  const anchor=document.getElementById('fixedOnAnchor').value;
+  const date=document.getElementById('fixedOnDate').value;
+  const shiftId=document.getElementById('fixedOnShift').value;
+  const note=document.getElementById('fixedOnNote').value.trim();
+  if(!anchor||!date||!shiftId){alert('请填写完整');return;}
+  const shift = shifts.find(s=>s.id===shiftId);
+  special.fixedOn.push({anchor,date,shiftId,shiftLabel:shift?shift.name+' '+shift.start+'-'+shift.end:shiftId,note});
+  document.getElementById('fixedOnDate').value='';
+  document.getElementById('fixedOnNote').value='';
+  renderAllSpecialLists();
+}
+function renderFixedOnList(){
+  const el=document.getElementById('fixedOnList');
+  el.innerHTML=special.fixedOn.map((r,i)=>`
+    <div class="rule-card">
+      <div class="rule-header">
+        <span class="chip chip-gold">📌 必须排班</span>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="removeSpecial('fixedOn',${i})">✕</button>
+      </div>
+      <div style="font-size:13px"><strong>${r.anchor}</strong> · ${r.date} · ${r.shiftLabel}
+        ${r.note?`<span style="color:var(--text3);margin-left:8px">${r.note}</span>`:''}
+      </div>
+    </div>`).join('') || '<div style="color:var(--text3);font-size:13px;padding:8px 0">暂无指定排班</div>';
+}
+
+// Fixed Off
+function addFixedOff(){
+  const anchor=document.getElementById('fixedOffAnchor').value;
+  const date=document.getElementById('fixedOffDate').value;
+  const shiftId=document.getElementById('fixedOffShift').value;
+  const note=document.getElementById('fixedOffNote').value.trim();
+  if(!anchor||!date||!shiftId){alert('请填写完整');return;}
+  const shift = shifts.find(s=>s.id===shiftId);
+  special.fixedOff.push({anchor,date,shiftId,shiftLabel:shift?shift.name+' '+shift.start+'-'+shift.end:shiftId,note});
+  document.getElementById('fixedOffDate').value='';
+  document.getElementById('fixedOffNote').value='';
+  renderAllSpecialLists();
+}
+function renderFixedOffList(){
+  const el=document.getElementById('fixedOffList');
+  el.innerHTML=special.fixedOff.map((r,i)=>`
+    <div class="rule-card">
+      <div class="rule-header">
+        <span class="chip chip-red">🚫 不可排班</span>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="removeSpecial('fixedOff',${i})">✕</button>
+      </div>
+      <div style="font-size:13px"><strong>${r.anchor}</strong> · ${r.date} · ${r.shiftLabel} 不可安排
+        ${r.note?`<span style="color:var(--text3);margin-left:8px">${r.note}</span>`:''}
+      </div>
+    </div>`).join('') || '<div style="color:var(--text3);font-size:13px;padding:8px 0">暂无排除设置</div>';
+}
+
+// Rest Day
+function addRestDay(){
+  const anchor=document.getElementById('restAnchor').value;
+  const date=document.getElementById('restDate').value;
+  const type=document.getElementById('restType').value;
+  const note=document.getElementById('restNote').value.trim();
+  if(!anchor||!date){alert('请选择主播和日期');return;}
+  special.restDays.push({anchor,date,type,note});
+  document.getElementById('restDate').value='';
+  document.getElementById('restNote').value='';
+  renderAllSpecialLists();
+}
+function renderRestDayList(){
+  const el=document.getElementById('restDayList');
+  el.innerHTML=special.restDays.map((r,i)=>`
+    <div class="rule-card">
+      <div class="rule-header">
+        <span class="chip chip-green">😴 休息日</span>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="removeSpecial('restDays',${i})">✕</button>
+      </div>
+      <div style="font-size:13px"><strong>${r.anchor}</strong> · ${r.date} · ${r.type==='counted'?'计入调休名额':'不占调休额外休息'}
+        ${r.note?`<span style="color:var(--text3);margin-left:8px">${r.note}</span>`:''}
+      </div>
+    </div>`).join('') || '<div style="color:var(--text3);font-size:13px;padding:8px 0">暂无指定休息日</div>';
+}
+
+// Event
+function addEvent(){
+  const date=document.getElementById('eventDate').value;
+  const name=document.getElementById('eventName').value.trim();
+  const anchorsStr=document.getElementById('eventAnchors').value.trim();
+  const shiftId=document.getElementById('eventShift').value;
+  if(!date||!name){alert('请填写日期和活动名称');return;}
+  const eventAnchors=anchorsStr?anchorsStr.split(/[,，]/).map(s=>s.trim()).filter(Boolean):[];
+  const shift=shiftId?shifts.find(s=>s.id===shiftId):null;
+  special.events.push({date,name,anchors:eventAnchors,shiftId,shiftLabel:shift?shift.name+' '+shift.start+'-'+shift.end:'不限班次'});
+  document.getElementById('eventDate').value='';
+  document.getElementById('eventName').value='';
+  document.getElementById('eventAnchors').value='';
+  document.getElementById('eventShift').value='';
+  renderAllSpecialLists();
+}
+function renderEventList(){
+  const el=document.getElementById('eventList');
+  el.innerHTML=special.events.map((e,i)=>`
+    <div class="rule-card">
+      <div class="rule-header">
+        <span class="chip chip-gold">🎯 大场/活动</span>
+        <button class="btn btn-ghost btn-sm btn-icon" onclick="removeSpecial('events',${i})">✕</button>
+      </div>
+      <div style="font-size:13px"><strong>${e.name}</strong> · ${e.date} · ${e.shiftLabel}
+        ${e.anchors.length?`<span style="color:var(--accent2);margin-left:8px">指定主播：${e.anchors.join('、')}</span>`:''}
+      </div>
+    </div>`).join('') || '<div style="color:var(--text3);font-size:13px;padding:8px 0">暂无活动/大场安排</div>';
+}
+
+function removeSpecial(type, i){ special[type].splice(i,1); renderAllSpecialLists(); }
+function clearAllSpecial(){
+  if(!confirm('确认清空所有特殊要求？')) return;
+  special={leaves:[],fixedOn:[],fixedOff:[],restDays:[],events:[]};
+  renderAllSpecialLists();
+}
+
+// ========== DATA / RATINGS ==========
+async function handleFile(e){
+  const f=e.target.files[0]; if(!f) return;
+  const zone=document.getElementById('uploadZone');
+  const fileInfo=document.getElementById('fileInfo');
+  zone.innerHTML='<div class="upload-icon">⏳</div><div class="upload-text" style="color:var(--accent2);margin-top:8px">正在解析文件...</div><div class="upload-sub">请稍候</div>';
+  fileInfo.style.display='none';
+
+  const isExcel=/\.(xlsx|xls)$/i.test(f.name);
+  let rows=[], headers=[];
+
+  try {
+    if(isExcel){
+      if(typeof XLSX==='undefined'){
+        await new Promise((res,rej)=>{
+          const s=document.createElement('script');
+          s.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+          s.onload=res; s.onerror=()=>rej(new Error('SheetJS加载失败，请检查网络'));
+          document.head.appendChild(s);
+        });
+      }
+      const buf=await f.arrayBuffer();
+      const wb=XLSX.read(buf,{type:'array',cellDates:true});
+      const ws=wb.Sheets[wb.SheetNames[0]];
+      const raw=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+      if(raw.length<2) throw new Error('表格数据为空');
+      headers=raw[0].map(h=>String(h||'').trim());
+      rows=raw.slice(1);
+    } else {
+      let text=await new Promise((res,rej)=>{
+        const r=new FileReader();
+        r.onload=ev=>res(ev.target.result);
+        r.onerror=()=>rej(new Error('读取失败'));
+        r.readAsText(f,'UTF-8');
+      });
+      if(/[\ufffd]{3,}/.test(text)){
+        text=await new Promise((res,rej)=>{
+          const r=new FileReader();
+          r.onload=ev=>res(ev.target.result);
+          r.onerror=()=>rej(new Error('读取失败'));
+          r.readAsText(f,'GBK');
+        });
+      }
+      const lines=text.trim().split('\n');
+      headers=lines[0].split(',').map(h=>h.trim().replace(/^"|"$/g,''));
+      rows=lines.slice(1).map(l=>l.split(',').map(v=>v.trim().replace(/^"|"$/g,'')));
+    }
+  } catch(err){
+    zone.innerHTML='<div class="upload-icon">❌</div><div class="upload-text" style="color:var(--red)">文件解析失败：'+err.message+'</div>';
+    return;
+  }
+
+  // ---- 解析完成：展示字段选择器，等用户配置后再评级 ----
+  const nameCol = headers.findIndex(h=>h.includes('主播姓名'));
+  if(nameCol<0){
+    zone.innerHTML='<div class="upload-icon">❌</div><div class="upload-text" style="color:var(--red)">未找到"主播姓名"列，请确认表格格式</div>';
+    return;
+  }
+
+  // 统计唯一主播和行数
+  const uniqueAnchors=new Set(rows.map(r=>String(r[nameCol]||'').trim()).filter(Boolean));
+
+  zone.innerHTML='<div class="upload-icon">✅</div><div class="upload-text" style="color:var(--green)">'+f.name+'</div>'
+    +'<div class="upload-sub">已识别 <strong>'+uniqueAnchors.size+'</strong> 位主播 · <strong>'+rows.length+'</strong> 条记录 · <strong>'+headers.length+'</strong> 个字段 · 请在下方配置评级维度</div>';
+  fileInfo.style.display='flex';
+  fileInfo.className='alert alert-info';
+  fileInfo.innerHTML='📋 文件已解析，请在 <strong>第2步</strong> 选择字段，<strong>第3步</strong> 配置权重后点击「按规则评级」';
+
+  // 渲染字段选择器
+  renderFieldSelector(headers, rows);
+}
+
+function renderManualRatings(aiRatings){
+  const container=document.getElementById('manualRatings');
+  if(!container) return;
+  const ratingColors={S:'gold',A:'accent',B:'green',C:'gray'};
+  const ratingLabels={S:'S · 顶尖',A:'A · 优秀',B:'B · 良好',C:'C · 普通'};
+  container.innerHTML=anchors.map((a,i)=>{
+    const reason=a.ratingReason||(aiRatings&&aiRatings[a.name]&&aiRatings[a.name].reason)||'';
+    return '<div class="anchor-row">'
+      +'<div class="anchor-avatar">'+a.name.slice(0,1)+'</div>'
+      +'<div class="anchor-info" style="flex:2">'
+        +'<div class="anchor-name-text">'+a.name+'</div>'
+        +'<div class="anchor-meta" style="color:'+(a.ratingSource==='ai'?'var(--accent2)':'var(--text3)')+';">'+(a.ratingSource==='ai'?'🤖 '+reason:'手动设置')+'</div>'
+      +'</div>'
+      +'<div class="rating-group">'
+        +['S','A','B','C'].map(r=>'<button class="rating-btn '+(a.rating===r?'sel-'+r:'')+'" onclick="setRating('+i+',\''+r+'\')">'+r+'</button>').join('')
+      +'</div>'
+      +'<span class="chip chip-'+ratingColors[a.rating]+'" style="margin-left:8px">'+ratingLabels[a.rating]+'</span>'
+      +'</div>';
+  }).join('');
+}
+
+// ========== WEEK ==========
+function getWeekDates(offset){
+  const now=new Date(); const day=now.getDay();
+  const mon=new Date(now);
+  mon.setDate(now.getDate()-(day===0?6:day-1)+offset*7);
+  return Array.from({length:7},(_,i)=>{const d=new Date(mon);d.setDate(mon.getDate()+i);return d;});
+}
+function fmt(d){ return `${d.getMonth()+1}/${d.getDate()}`; }
+function fmtFull(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function dayName(i){ return ['周一','周二','周三','周四','周五','周六','周日'][i]; }
+function getWeekNum(d){ const j=new Date(d.getFullYear(),0,1); return Math.ceil((((d-j)/86400000)+j.getDay()+1)/7); }
+function changeWeek(dir){ weekOffset+=dir; if(document.getElementById('panel-generate').classList.contains('active')) refreshGeneratePage(); }
+
+function refreshGeneratePage(){
+  const days=getWeekDates(weekOffset);
+  document.getElementById('weekLabel').textContent=
+    `${days[0].getFullYear()}年 第${getWeekNum(days[0])}周（${fmt(days[0])} – ${fmt(days[6])}）`;
+
+  const apiOk = getApiKey().length > 20;
+  document.getElementById('apiWarning').style.display = apiOk ? 'none' : 'flex';
+
+  const activeAnchors = anchors.filter(a=>!a.disabled);
+  const total = special.leaves.length+special.fixedOn.length+special.fixedOff.length+special.restDays.length+special.events.length;
+  const statsHtml=`
+    <div class="stat-card">
+      <div class="stat-num" style="color:var(--accent2)">${activeAnchors.length}</div>
+      <div class="stat-label">参与排班主播</div>
+      <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:4px">
+        ${activeAnchors.map(a=>`<span style="font-size:10px;padding:2px 6px;border-radius:10px;background:var(--accent-bg);color:var(--accent2)">${a.name}</span>`).join('')}
+      </div>
+    </div>
+    <div class="stat-card"><div class="stat-num">${shifts.length}</div><div class="stat-label">班次数量</div></div>
+    <div class="stat-card"><div class="stat-num">${total}</div><div class="stat-label">特殊要求条数</div></div>
+    <div class="stat-card"><div class="stat-num">${document.getElementById('rWeeklyShifts')?document.getElementById('rWeeklyShifts').value:5}</div><div class="stat-label">每人每周班次</div></div>
+  `;
+  document.getElementById('configStats').innerHTML=statsHtml;
+
+  let previewHtml='';
+  if(total===0){ previewHtml='<div style="color:var(--text3);font-size:13px;padding:8px 4px">暂无特殊要求，AI将按标准规则自由排班</div>'; }
+  else {
+    special.leaves.forEach(l=>{ previewHtml+=`<span class="chip chip-red" style="margin:3px">🏖 ${l.anchor} ${l.date} 请假</span>`; });
+    special.fixedOn.forEach(r=>{ previewHtml+=`<span class="chip chip-gold" style="margin:3px">📌 ${r.anchor} ${r.date} ${r.shiftLabel}</span>`; });
+    special.fixedOff.forEach(r=>{ previewHtml+=`<span class="chip chip-red" style="margin:3px">🚫 ${r.anchor} ${r.date} 不可排${r.shiftLabel}</span>`; });
+    special.restDays.forEach(r=>{ previewHtml+=`<span class="chip chip-green" style="margin:3px">😴 ${r.anchor} ${r.date} 休息</span>`; });
+    special.events.forEach(e=>{ previewHtml+=`<span class="chip chip-accent" style="margin:3px">🎯 ${e.name} ${e.date}</span>`; });
+    previewHtml=`<div style="display:flex;flex-wrap:wrap;gap:4px">${previewHtml}</div>`;
+  }
+  document.getElementById('specialPreview').innerHTML=previewHtml;
+}
+
+// ========== GENERATE ==========
+async function generateSchedule(){
+  const key=getApiKey();
+  if(!key){ alert('请先在左侧选择服务商并填入 API Key'); return; }
+
+  const days=getWeekDates(weekOffset);
+  const weeklyShifts=parseInt(document.getElementById('rWeeklyShifts').value)||5;
+  const weeklyOff=parseInt(document.getElementById('rWeeklyOff').value)||2;
+  const minRest=parseInt(document.getElementById('rMinRest').value)||12;
+  const maxCons=parseInt(document.getElementById('rMaxCons').value)||5;
+  const goldenSlot=document.getElementById('rGoldenSlot').value||'D';
+  const optGoal=document.getElementById('rOptGoal').value||'gpm';
+  const strategy=document.getElementById('rStrategy').value.trim();
+  const dataNote=document.getElementById('dataNote')?document.getElementById('dataNote').value.trim():'';
+  const uploadedStats=window._dataSummary||'';
+
+  // 根据主播数 & 班次数预估时间：Haiku约15s，Sonnet约30s，其他约20s
+  const modelNow = getModel();
+  const estMs = modelNow.includes('haiku')||modelNow.includes('7B')||modelNow.includes('8B') ? 15000
+              : modelNow.includes('sonnet')||modelNow.includes('14B') ? 28000 : 22000;
+  showLoading(true, '正在构建请求...', {estimatedMs: estMs, title:'AI 智能排班推演中', icon:'🤖'});
+
+  const activeAnchors=anchors.filter(a=>!a.disabled);
+  const anchorsList=activeAnchors.map(a=>`${a.name}(${a.rating}级)`).join('、');
+  const shiftsList=shifts.map(s=>`${s.id}班(${s.start}-${s.end})`).join('、');
+  const datesInfo=days.map((d,i)=>`${dayName(i)}=${fmtFull(d)}`).join('、');
+  const shiftNames=shifts.map(s=>s.name).join('、');
+
+  let specialStr='';
+  if(special.leaves.length) specialStr+='\n【请假】\n'+special.leaves.map(l=>`- ${l.anchor} 在 ${l.date} 全天请假，不可排任何班次${l.note?' ('+l.note+')':''}`).join('\n');
+  if(special.fixedOn.length) specialStr+='\n【必须排班（锁死）】\n'+special.fixedOn.map(r=>`- ${r.anchor} 在 ${r.date} 的 ${r.shiftLabel} 必须排班，不可更改${r.note?' ('+r.note+')':''}`).join('\n');
+  if(special.fixedOff.length) specialStr+='\n【不可排班】\n'+special.fixedOff.map(r=>`- ${r.anchor} 在 ${r.date} 不可安排 ${r.shiftLabel}${r.note?' ('+r.note+')':''}`).join('\n');
+  if(special.restDays.length) specialStr+='\n【指定休息日】\n'+special.restDays.map(r=>`- ${r.anchor} 在 ${r.date} 全天休息(${r.type==='counted'?'计入调休名额':'额外休息不占名额'})${r.note?' ('+r.note+')':''}`).join('\n');
+  if(special.events.length) specialStr+='\n【大场/活动】\n'+special.events.map(e=>`- ${e.date} 活动【${e.name}】${e.anchors.length?'，指定主播 '+e.anchors.join('、')+' 必须参加':''}${e.shiftId?' ('+e.shiftLabel+')':''}`).join('\n');
+
+  const sysPrompt=`你是排班系统，严格遵守约束，只输出JSON，不加任何解释或代码块。`;
+
+  const userPrompt=`主播:${anchorsList}
+班次:${shiftsList}
+日期:${datesInfo}
+规则:每人${weeklyShifts}班+调休${weeklyOff}天;同日最多1班;班次间隔≥${minRest}h;禁夜班(22-02)接早班(06-14);最多连续${maxCons}天
+黄金档:${goldenSlot}班排S/A级;目标:${optGoal==='gpm'?'GPM最大':'ROI最大'}
+${strategy?'运营:'+strategy:''}${dataNote?'\n备注:'+dataNote:''}
+
+
+特殊:${specialStr||'无'}
+
+输出纯JSON（不要代码块，不要任何解释文字），格式：
+{"schedule":{"${shifts[0]?shifts[0].name:'A班'}":{"周一":"","周二":"","周三":"","周四":"","周五":"","周六":"","周日":""}${shifts.slice(1).map(s=>`,\n"${s.name}":{"周一":"","周二":"","周三":"","周四":"","周五":"","周六":"","周日":""}`).join('')}},"offDays":{"周一":[],"周二":[],"周三":[],"周四":[],"周五":[],"周六":[],"周日":[]},"violations":[],"warnings":[],"summary":"","anchorWeekly":{${anchors.map(a=>`"${a.name}":{"shifts":0,"off":0}`).join(',')}}}`;
+
+
+
+  // 云雾复制模式：直接复制 prompt 到剪贴板，不发请求
+  if(PROVIDERS[getProvider()] && PROVIDERS[getProvider()].format === 'copy'){
+    showLoading(false);
+    var fullPrompt = sysPrompt + '\n\n' + userPrompt;
+    try { await navigator.clipboard.writeText(fullPrompt); } catch(e){}
+    gotoPanel('result');
+    var container = document.getElementById('resultContent');
+    container.innerHTML = '<div class="alert alert-info" style="margin-bottom:16px">📋 <strong>Prompt 已复制到剪贴板！</strong></div>'
+      + '<div class="card" style="margin-bottom:16px;padding:16px">'
+      + '<div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text)">使用步骤</div>'
+      + '<div style="font-size:13px;color:var(--text2);line-height:2">'
+      + '1. 打开 <a href="https://yunwu.ai" target="_blank" style="color:var(--accent2)">yunwu.ai</a> 或 Cherry Studio<br>'
+      + '2. 粘贴（Ctrl+V / Cmd+V）已复制的 Prompt<br>'
+      + '3. 发送后将AI回复的JSON复制回来<br>'
+      + '4. 点击下方「粘贴JSON结果」按钮导入排班表'
+      + '</div></div>'
+      + '<div class="form-group" style="margin-bottom:12px">'
+      + '<label style="font-size:12px;color:var(--text2)">粘贴 AI 返回的 JSON</label>'
+      + '<textarea id="manualJsonInput" style="min-height:120px;font-size:12px;font-family:monospace" placeholder="{&quot;schedule&quot;:{...},&quot;offDays&quot;:{...},...}"></textarea>'
+      + '</div>'
+      + '<div style="display:flex;gap:10px">'
+      + '<button class="btn btn-primary" onclick="importManualJson()">📥 导入排班结果</button>'
+      + '<button class="btn btn-ghost" onclick="copyPromptAgain()">📋 重新复制Prompt</button>'
+      + '</div>';
+    window._lastPrompt = fullPrompt;
+    return;
+  }
+
+  let _rawText = '';
+  try {
+    _rawText = await callLLM(sysPrompt, userPrompt, 1000);
+    showLoading(false);
+    let clean = _rawText.trim();
+    clean = clean.replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
+    const first = clean.indexOf('{');
+    const last  = clean.lastIndexOf('}');
+    if(first >= 0 && last > first) clean = clean.slice(first, last+1);
+    const result = JSON.parse(clean);
+    lastResult = result;
+    renderResult(result, days);
+    gotoPanel('result');
+  } catch(err){
+    showLoading(false);
+    gotoPanel('result');
+    const container = document.getElementById('resultContent');
+    const rawPreview = _rawText ? '<div style="margin-bottom:12px"><div style="font-size:12px;color:var(--text3);margin-bottom:6px">AI 原始返回（供排查）：</div><pre style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:11px;color:var(--text2);white-space:pre-wrap;word-break:break-all;max-height:280px;overflow-y:auto">'+_rawText.replace(/</g,'&lt;').slice(0,2000)+'</pre></div>' : '';
+    container.innerHTML = '<div class="alert alert-error" style="margin-bottom:12px">❌ 排班生成失败：'+err.message+'</div>'
+      + '<div class="alert alert-warn" style="margin-bottom:12px">请检查：①API Key正确 ②服务商匹配 ③账户有余额</div>'
+      + rawPreview
+      + '<button class="btn btn-primary" onclick="gotoPanel(&quot;generate&quot;)">🔄 重新生成</button>';
+  }
+}
+
+// ========== LOADING / PROGRESS ==========
+var _progTimer = null;
+var _progStart = 0;
+var _progEstMs = 20000;
+var _progStages = [
+  {at:0.02, label:'发送请求...'},
+  {at:0.12, label:'模型理解约束'},
+  {at:0.30, label:'分配班次中...'},
+  {at:0.52, label:'检查合规冲突'},
+  {at:0.68, label:'优化人效组合'},
+  {at:0.84, label:'生成结果中...'},
+  {at:0.95, label:'等待响应返回'},
+];
+
+function showLoading(show, stageText, opts) {
+  if(typeof opts === 'undefined') opts = {};
+  var overlay = document.getElementById('loadingOverlay');
+  if(!overlay) return;
+  if(show) {
+    _progStart = Date.now();
+    _progEstMs = opts.estimatedMs || 22000;
+    var title = opts.title || 'AI 智能排班推演中';
+    var icon  = opts.icon  || '🤖';
+    var el;
+    el = document.getElementById('loadingTitle'); if(el) el.textContent = title;
+    el = document.getElementById('loadingIcon');  if(el) el.textContent = icon;
+    el = document.getElementById('loadingStage'); if(el) el.textContent = stageText || '准备中...';
+    el = document.getElementById('progFill');     if(el) el.style.width = '0%';
+    el = document.getElementById('progPct');      if(el) el.textContent = '0%';
+    el = document.getElementById('progLabel');    if(el) el.textContent = '初始化';
+    el = document.getElementById('etaSec');       if(el) el.textContent = Math.round(_progEstMs/1000);
+    overlay.classList.add('show');
+    _startProgTimer();
+  } else {
+    _stopProgTimer();
+    var fill = document.getElementById('progFill');
+    var pct  = document.getElementById('progPct');
+    var lbl  = document.getElementById('progLabel');
+    var eta  = document.getElementById('etaSec');
+    var stg  = document.getElementById('loadingStage');
+    if(fill) fill.style.width = '100%';
+    if(pct)  pct.textContent = '100%';
+    if(lbl)  lbl.textContent = '完成 ✓';
+    if(eta)  eta.textContent = '0';
+    if(stg)  stg.textContent = '排班生成完毕！';
+    overlay.classList.remove('show');
+  }
+}
+
+function _startProgTimer() {
+  _stopProgTimer();
+  _progTimer = setInterval(function() {
+    var elapsed = Date.now() - _progStart;
+    var ratio   = Math.min(elapsed / _progEstMs, 0.97);
+    var pct     = Math.round(97 * (1 - Math.pow(1 - ratio, 2.5)));
+    var remaining = Math.max(0, Math.round((_progEstMs - elapsed) / 1000));
+    // 找当前阶段文字
+    var label = _progStages[0].label;
+    for(var i = _progStages.length - 1; i >= 0; i--) {
+      if(ratio >= _progStages[i].at) { label = _progStages[i].label; break; }
+    }
+    var fill = document.getElementById('progFill');
+    var pctEl = document.getElementById('progPct');
+    var lbl   = document.getElementById('progLabel');
+    var eta   = document.getElementById('etaSec');
+    var stg   = document.getElementById('loadingStage');
+    if(fill)  fill.style.width = pct + '%';
+    if(pctEl) pctEl.textContent = pct + '%';
+    if(lbl)   lbl.textContent = label;
+    if(eta)   eta.textContent = remaining > 0 ? remaining : '即将完成';
+    if(stg)   stg.textContent = label;
+  }, 350);
+}
+
+function _stopProgTimer() {
+  if(_progTimer) { clearInterval(_progTimer); _progTimer = null; }
+}
+
+function importManualJson(){
+  var raw = document.getElementById('manualJsonInput');
+  if(!raw || !raw.value.trim()){ alert('请先粘贴JSON内容'); return; }
+  try {
+    var clean = raw.value.trim();
+    clean = clean.replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
+    var first=clean.indexOf('{'), last=clean.lastIndexOf('}');
+    if(first>=0&&last>first) clean=clean.slice(first,last+1);
+    var result = JSON.parse(clean);
+    lastResult = result;
+    var days = getWeekDates(weekOffset);
+    renderResult(result, days);
+    // 替换掉导入区域，只保留排班表
+    var importArea = document.getElementById('manualJsonInput');
+    if(importArea) importArea.closest('.form-group').remove();
+  } catch(e){
+    alert('JSON格式错误：'+e.message+'\n\n请确认复制了完整的JSON内容');
+  }
+}
+function copyPromptAgain(){
+  if(window._lastPrompt){
+    navigator.clipboard.writeText(window._lastPrompt).then(function(){
+      var btn = event.target;
+      var orig = btn.textContent;
+      btn.textContent = '✅ 已复制';
+      setTimeout(function(){ btn.textContent = orig; }, 2000);
+    });
+  }
+}
+
+// ========== RENDER RESULT ==========
+function renderResult(data, days){
+  const container=document.getElementById('resultContent');
+  const dayNames=['周一','周二','周三','周四','周五','周六','周日'];
+  let html='';
+
+  if(data.violations&&data.violations.length>0){
+    data.violations.forEach(v=>{ html+=`<div class="alert alert-error">🚨 违规：${v}</div>`; });
+  }
+  if(data.warnings&&data.warnings.length>0){
+    data.warnings.forEach(w=>{ html+=`<div class="alert alert-warn">⚠️ ${w}</div>`; });
+  }
+  if(data.summary){
+    html+=`<div class="summary-box">💡 ${data.summary}</div>`;
+  }
+
+  // Table
+  html+=`<div class="schedule-wrap"><table class="schedule-table"><thead><tr>
+    <th class="shift-label">班次时段</th>
+    ${dayNames.map((d,i)=>`<th>${d}<br><span style="font-weight:400;font-size:11px;color:var(--text3)">${fmt(days[i])}</span></th>`).join('')}
+  </tr></thead><tbody>`;
+
+  const goldenShift=document.getElementById('rGoldenSlot').value||'D';
+  shifts.forEach(s=>{
+    const row=data.schedule?.[s.name]||data.schedule?.[s.id+'班']||data.schedule?.[s.id]||{};
+    const isGolden=s.id===goldenShift;
+    html+=`<tr>
+      <td class="shift-label" style="${isGolden?'color:var(--gold)':''}">
+        ${isGolden?'⭐':''} ${s.name} ${s.start}-${s.end}
+      </td>
+      ${dayNames.map(d=>{
+        const nm=row[d]||'';
+        if(!nm) return `<td><span class="cell-empty">—</span></td>`;
+        const isTopAnchor=anchors.find(a=>a.name===nm&&(a.rating==='S'||a.rating==='A'));
+        return `<td><span class="cell-name${isTopAnchor&&isGolden?' gold':''}">${nm}</span></td>`;
+      }).join('')}
+    </tr>`;
+  });
+
+  // Off row
+  html+=`<tr class="off-row"><td class="shift-label" style="color:var(--green)">😴 当日调休</td>
+    ${dayNames.map(d=>{
+      const offs=data.offDays?.[d]||[];
+      return `<td>${offs.length?offs.map(n=>`<span class="cell-name off-day">${n}</span>`).join(' '):'<span class="cell-empty">—</span>'}</td>`;
+    }).join('')}
+  </tr>`;
+  html+=`</tbody></table></div>`;
+
+  // Weekly summary
+  if(data.anchorWeekly){
+    html+=`<div style="margin-top:20px">
+      <div class="section-header"><span class="section-title">本周工时汇总</span><div class="section-line"></div></div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px">
+        ${Object.entries(data.anchorWeekly).map(([name,v])=>`
+          <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;min-width:110px">
+            <div style="font-weight:600;font-size:13px">${name}</div>
+            <div style="font-size:12px;color:var(--text2);margin-top:4px">上班 <strong>${v.shifts||0}</strong> 班 · 调休 <strong>${v.off||0}</strong> 天</div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  // Actions
+  html+=`<div class="action-bar" style="margin-top:24px">
+    <button class="btn btn-ghost" onclick="copyMarkdown()">📋 复制 Markdown 表格</button>
+    <button class="btn btn-ghost" onclick="generateNotice()">📢 生成主播通知</button>
+    <button class="btn btn-ghost" onclick="checkCompliance()">✅ 合规检查</button>
+    <button class="btn btn-primary" onclick="gotoPanel('generate')">🔄 重新生成</button>
+  </div>`;
+
+  container.innerHTML=html;
+}
+
+// ========== RESULT ACTIONS ==========
+function copyMarkdown(){
+  if(!lastResult){ alert('暂无结果'); return; }
+  const days=getWeekDates(weekOffset);
+  const dayNames=['周一','周二','周三','周四','周五','周六','周日'];
+  let md=`| 班次时段 | ${dayNames.map((d,i)=>d+' '+fmt(days[i])).join(' | ')} |\n`;
+  md+=`| --- | --- | --- | --- | --- | --- | --- | --- |\n`;
+  shifts.forEach(s=>{
+    const row=lastResult.schedule?.[s.name]||lastResult.schedule?.[s.id+'班']||{};
+    md+=`| **${s.name} ${s.start}-${s.end}** | ${dayNames.map(d=>row[d]||'—').join(' | ')} |\n`;
+  });
+  const off=lastResult.offDays||{};
+  md+=`| **当日调休** | ${dayNames.map(d=>(off[d]||[]).join('、')||'—').join(' | ')} |\n`;
+  navigator.clipboard.writeText(md).then(()=>alert('✅ 已复制到剪贴板！'));
+}
+
+async function generateNotice(){
+  const key=getApiKey();
+  if(!key||!lastResult){ alert('请先生成排班结果并确认API Key'); return; }
+  showLoading(true,'正在生成主播通知...', {estimatedMs:8000, title:'生成排班通知', icon:'📢'});
+  const days=getWeekDates(weekOffset);
+  const dayNames=['周一','周二','周三','周四','周五','周六','周日'];
+  let tableStr='';
+  shifts.forEach(s=>{
+    const row=lastResult.schedule?.[s.name]||lastResult.schedule?.[s.id+'班']||{};
+    tableStr+=`${s.name}(${s.start}-${s.end})：${dayNames.map(d=>row[d]?d+row[d]:'').filter(Boolean).join('、') || '本周无此班'}\n`;
+  });
+  const offStr=dayNames.map((d,i)=>{const offs=(lastResult.offDays?.[d]||[]);return offs.length?`${d}(${fmt(days[i])})调休：${offs.join('、')}`:''}).filter(Boolean).join('；');
+  try {
+    const text = await callLLM(
+      '你是专业的运营助理，负责撰写简洁友好的微信群通知。',
+      `根据以下排班表，生成一份微信群通知，面向所有主播，语气专业友好，包含每位主播本周具体排班时间和调休安排。\n\n排班信息：\n${tableStr}\n调休：${offStr}\n\n直接输出通知正文，不要其他解释。`,
+      800
+    );
+    showLoading(false);
+    const win=window.open('','_blank','width=600,height=500');
+    win.document.write(`<html><head><meta charset="UTF-8"><title>排班通知</title><style>body{font-family:sans-serif;padding:30px;white-space:pre-wrap;line-height:1.8;background:#fff;color:#222}</style></head><body>${text.replace(/</g,'&lt;')}</body></html>`);
+  } catch(err){ showLoading(false); alert('生成失败：'+err.message); }
+}
+
+async function checkCompliance(){
+  const key=getApiKey();
+  if(!key||!lastResult){ alert('请先生成排班结果'); return; }
+  showLoading(true,'正在进行合规检查...', {estimatedMs:8000, title:'合规审查中', icon:'✅'});
+  const summary=JSON.stringify(lastResult.schedule||{});
+  try {
+    const text = await callLLM(
+      '你是劳务合规专家，负责审查直播间排班方案。',
+      `请对以下排班方案进行合规审查，检查是否存在：1)连续工作超5天 2)死亡班次组合（夜班接早班）3)每人班次数不达标 4)其他潜在问题。排班数据：${summary}\n\n用简洁中文列出问题，如无问题请说"合规检查通过，未发现违规项"。`,
+      600
+    );
+    showLoading(false);
+    alert(text);
+  } catch(err){ showLoading(false); alert('检查失败：'+err.message); }
+}
+
+
+// ========== 保存 & 恢复设置 ==========
+var STORAGE_KEYS = {
+  api:     'sch_api',       // provider + key + model
+  anchors: 'sch_anchors',   // 主播花名册
+  shifts:  'sch_shifts',    // 班次配置
+  rules:   'sch_rules',     // 排班规则参数
+  special: 'sch_special',   // 特殊要求
+  rating:  'sch_rating',    // 评级字段/权重/规则文本（已有 scheduleRuleConfig，统一进来）
+};
+
+function saveAllSettings() {
+  try {
+    // API 配置
+    localStorage.setItem(STORAGE_KEYS.api, JSON.stringify({
+      provider: document.getElementById('apiProvider').value,
+      model:    document.getElementById('modelSelect').value,
+      key:      document.getElementById('apiKeyInput').value
+    }));
+    // 主播
+    localStorage.setItem(STORAGE_KEYS.anchors, JSON.stringify(anchors));
+    // 班次
+    localStorage.setItem(STORAGE_KEYS.shifts, JSON.stringify(shifts));
+    // 排班规则
+    localStorage.setItem(STORAGE_KEYS.rules, JSON.stringify({
+      weeklyShifts: document.getElementById('rWeeklyShifts').value,
+      weeklyOff:    document.getElementById('rWeeklyOff').value,
+      minRest:      document.getElementById('rMinRest').value,
+      maxCons:      document.getElementById('rMaxCons').value,
+      goldenSlot:   document.getElementById('rGoldenSlot').value,
+      optGoal:      document.getElementById('rOptGoal').value,
+      strategy:     document.getElementById('rStrategy').value,
+      dataNote:     document.getElementById('dataNote') ? document.getElementById('dataNote').value : ''
+    }));
+    // 特殊要求
+    localStorage.setItem(STORAGE_KEYS.special, JSON.stringify(special));
+    // 评级配置（字段+权重+规则文本）
+    localStorage.setItem(STORAGE_KEYS.rating, JSON.stringify({
+      fields:  _selectedFields,
+      weights: _fieldWeights,
+      logic:   document.getElementById('ruleLogicText') ? document.getElementById('ruleLogicText').value : ''
+    }));
+    showToast('✅ 所有设置已保存到本地');
+  } catch(e) {
+    showToast('❌ 保存失败：' + e.message);
+  }
+}
+
+function loadAllSettings() {
+  try {
+    // API
+    var api = JSON.parse(localStorage.getItem(STORAGE_KEYS.api) || 'null');
+    if(api) {
+      var pEl = document.getElementById('apiProvider');
+      if(pEl && api.provider) { pEl.value = api.provider; onProviderChange(); }
+      var mEl = document.getElementById('modelSelect');
+      if(mEl && api.model) { mEl.value = api.model; }
+      var kEl = document.getElementById('apiKeyInput');
+      if(kEl && api.key) { kEl.value = api.key; onApiKeyInput(); }
+    }
+    // 主播
+    var savedAnchors = JSON.parse(localStorage.getItem(STORAGE_KEYS.anchors) || 'null');
+    if(savedAnchors && savedAnchors.length) {
+      anchors = savedAnchors;
+      renderAnchorList();
+      refreshAllSelects();
+    }
+    // 班次
+    var savedShifts = JSON.parse(localStorage.getItem(STORAGE_KEYS.shifts) || 'null');
+    if(savedShifts && savedShifts.length) {
+      shifts = savedShifts;
+      renderShiftList();
+    }
+    // 排班规则
+    var rules = JSON.parse(localStorage.getItem(STORAGE_KEYS.rules) || 'null');
+    if(rules) {
+      if(rules.weeklyShifts) document.getElementById('rWeeklyShifts').value = rules.weeklyShifts;
+      if(rules.weeklyOff)    document.getElementById('rWeeklyOff').value    = rules.weeklyOff;
+      if(rules.minRest)      document.getElementById('rMinRest').value      = rules.minRest;
+      if(rules.maxCons)      document.getElementById('rMaxCons').value      = rules.maxCons;
+      if(rules.goldenSlot) { var gs = document.getElementById('rGoldenSlot'); if(gs) gs.value = rules.goldenSlot; }
+      if(rules.optGoal)    { var og = document.getElementById('rOptGoal');    if(og) og.value = rules.optGoal; }
+      if(rules.strategy)   { var st = document.getElementById('rStrategy');   if(st) st.value = rules.strategy; }
+      if(rules.dataNote)   { var dn = document.getElementById('dataNote');    if(dn) dn.value = rules.dataNote; }
+    }
+    // 特殊要求
+    var savedSpecial = JSON.parse(localStorage.getItem(STORAGE_KEYS.special) || 'null');
+    if(savedSpecial) {
+      if(Array.isArray(savedSpecial.leaves))  special.leaves  = savedSpecial.leaves;
+      if(Array.isArray(savedSpecial.fixedOn)) special.fixedOn = savedSpecial.fixedOn;
+      if(Array.isArray(savedSpecial.fixedOff))special.fixedOff= savedSpecial.fixedOff;
+      if(Array.isArray(savedSpecial.restDays))special.restDays= savedSpecial.restDays;
+      if(Array.isArray(savedSpecial.events))  special.events  = savedSpecial.events;
+      updateSpecialBadge();
+    }
+    // 评级配置
+    var rating = JSON.parse(localStorage.getItem(STORAGE_KEYS.rating) || 'null');
+    if(rating) {
+      if(Array.isArray(rating.fields))  _selectedFields = rating.fields;
+      if(rating.weights) _fieldWeights = rating.weights;
+      var rl = document.getElementById('ruleLogicText');
+      if(rl && rating.logic) rl.value = rating.logic;
+    }
+  } catch(e) {
+    console.warn('加载设置失败:', e);
+  }
+}
+
+// ── 清除弹窗 ──
+var CLEAR_MODULES = [
+  { key: 'api',     label: 'API 配置',   desc: '服务商选择、模型、API Key' },
+  { key: 'anchors', label: '主播花名册', desc: '所有主播名称、评级、停用状态' },
+  { key: 'shifts',  label: '班次配置',   desc: '所有班次时段设置' },
+  { key: 'rules',   label: '排班规则',   desc: '工时约束、黄金档、优化目标、补充策略' },
+  { key: 'special', label: '特殊要求',   desc: '请假、必须排班、不可排班、休息日、大场活动' },
+  { key: 'rating',  label: '评级配置',   desc: '字段选择、权重设置、评判规则文本' },
+];
+
+function showClearModal() {
+  var list = document.getElementById('clearCheckList');
+  list.innerHTML = CLEAR_MODULES.map(function(m) {
+    var hasSaved = !!localStorage.getItem(STORAGE_KEYS[m.key]);
+    return '<label class="clear-check-item">'
+      + '<input type="checkbox" name="clearItem" value="' + m.key + '"' + (hasSaved ? '' : ' disabled') + '>'
+      + '<div><div class="ci-label">' + m.label + (hasSaved ? '' : ' <span style="font-size:10px;color:#5a5a72">(未保存)</span>') + '</div>'
+      + '<div class="ci-desc">' + m.desc + '</div></div>'
+      + '</label>';
+  }).join('');
+  var modal = document.getElementById('clearModal');
+  modal.style.display = 'flex';
+}
+
+function hideClearModal() {
+  document.getElementById('clearModal').style.display = 'none';
+}
+
+function confirmClear() {
+  var checked = document.querySelectorAll('#clearCheckList input[type=checkbox]:checked');
+  if(!checked.length) { hideClearModal(); return; }
+  var cleared = [];
+  checked.forEach(function(cb) {
+    var key = cb.value;
+    localStorage.removeItem(STORAGE_KEYS[key]);
+    // 同时重置内存状态
+    if(key === 'anchors') { anchors = []; renderAnchorList(); refreshAllSelects(); }
+    if(key === 'shifts')  { shifts  = []; renderShiftList(); }
+    if(key === 'rules') {
+      document.getElementById('rWeeklyShifts').value = '5';
+      document.getElementById('rWeeklyOff').value    = '2';
+      document.getElementById('rMinRest').value      = '12';
+      document.getElementById('rMaxCons').value      = '5';
+      var gs=document.getElementById('rGoldenSlot'); if(gs) gs.selectedIndex=0;
+      var og=document.getElementById('rOptGoal');    if(og) og.selectedIndex=0;
+      var st=document.getElementById('rStrategy');   if(st) st.value='';
+      var dn=document.getElementById('dataNote');    if(dn) dn.value='';
+    }
+    if(key === 'special') {
+      special = {leaves:[],fixedOn:[],fixedOff:[],restDays:[],events:[]};
+      renderAllSpecialLists();
+    }
+    if(key === 'rating') {
+      _selectedFields=[]; _fieldWeights={};
+      var rl=document.getElementById('ruleLogicText'); if(rl) rl.value='';
+      localStorage.removeItem('scheduleRuleConfig');
+    }
+    if(key === 'api') {
+      document.getElementById('apiKeyInput').value='';
+      onApiKeyInput();
+    }
+    var m = CLEAR_MODULES.find(function(x){ return x.key===key; });
+    if(m) cleared.push(m.label);
+  });
+  hideClearModal();
+  showToast('🗑 已清除：' + cleared.join('、'));
+}
+
+function showToast(msg) {
+  var toast = document.getElementById('saveToast');
+  if(!toast) return;
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(function(){ toast.classList.remove('show'); }, 3000);
+}
+
+// ========== INIT ==========
+onProviderChange();
+renderAnchorList();
+renderShiftList();
+refreshSpecialSelects();
+loadAllSettings();
+refreshGeneratePage();
+</script>
+</body>
+</html>
