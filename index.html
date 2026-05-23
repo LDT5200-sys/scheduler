@@ -535,7 +535,7 @@
       <select id="apiProvider" onchange="onProviderChange()" style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px;padding:6px 8px;margin-bottom:6px;outline:none">
         <option value="anthropic">Anthropic (Claude)</option>
         <option value="siliconflow">✅ 硅基流动（推荐·无跨域限制）</option>
-        <option value="yunwu">☁️ 云雾API（复制Prompt模式）</option>
+        <option value="yunwu">☁️ 云雾API（需域名加白）</option>
         <option value="openai">自定义地址（需支持跨域）</option>
       </select>
       <select id="modelSelect" style="width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:7px;color:var(--text);font-size:12px;padding:6px 8px;margin-bottom:6px;outline:none">
@@ -553,7 +553,7 @@
         <div style="font-size:10px;color:#8b84ff;font-weight:600;margin-bottom:3px">没有Key？免费注册</div>
         <a href="https://cloud.siliconflow.cn" target="_blank" style="font-size:10px;color:#8b84ff;text-decoration:underline">硅基流动 → 免费额度够用</a>
       </div>
-      <div id="corsWarning" style="display:none;font-size:10px;color:#f0b429;margin-top:4px;line-height:1.6">⚠️ 云雾等平台设有域名白名单，本地HTML文件会被403拒绝。<br>推荐改用 <strong style="color:#8b84ff">硅基流动</strong>，无限制，支持DeepSeek/Qwen3。</div>
+      <div id="corsWarning" style="display:none;font-size:10px;color:#f0b429;margin-top:4px;line-height:1.6">⚠️ 云雾需将 <strong style="color:#8b84ff">ldt5200-sys.github.io</strong> 加入令牌白名单。<br>令牌管理 → 编辑令牌 → 来源限制 → 填入此域名。</div>
     </div>
 
     <nav class="nav">
@@ -1055,11 +1055,11 @@ const PROVIDERS = {
   },
   yunwu: {
     label: '云雾API',
-    baseUrl: '',
+    baseUrl: 'https://yunwu.ai/v1/chat/completions',
     models: ['gpt-4o','gpt-4o-mini','claude-3-5-sonnet-20241022','claude-3-5-haiku-20241022','deepseek-chat','deepseek-v3','gemini-1.5-pro'],
-    format: 'copy',
-    keyHint: '无需填写Key',
-    keyCheck: function(k){ return true; }
+    format: 'openai',
+    keyHint: 'sk-...',
+    keyCheck: function(k){ return k.startsWith('sk-') && k.length > 10; }
   },
   openai: {
     label: '自定义地址',
@@ -1085,11 +1085,10 @@ function onProviderChange(){
   if(cw) cw.style.display = isYunwu ? 'block' : 'none';
   if(isYunwu){
     var cw2 = document.getElementById('corsWarning');
-    if(cw2) cw2.innerHTML = '📋 云雾不支持浏览器直连。选此模式后，点「生成排班」会<strong style="color:#8b84ff">复制Prompt</strong>，粘贴到云雾官网/Cherry Studio即可。';
-    var st = document.getElementById('apiStatus');
-    if(st){ st.textContent='复制Prompt模式 · 无需填Key'; st.style.color='var(--accent2)'; }
-    var dot = document.getElementById('apiDot');
-    if(dot) dot.className='api-dot on';
+    if(cw2) cw2.innerHTML = '⚠️ 云雾需要将 <strong style="color:#8b84ff">ldt5200-sys.github.io</strong> 加入令牌白名单后才能使用。<br>令牌管理 → 编辑 → 来源限制 → 填入域名。';
+    if(cw2) cw2.style.display = 'block';
+    var apiWrap = document.querySelector('.api-input-wrap');
+    if(apiWrap) apiWrap.style.display = '';
   }
   onApiKeyInput();
 }
@@ -1984,34 +1983,6 @@ ${strategy?'运营:'+strategy:''}${dataNote?'\n备注:'+dataNote:''}
 {"schedule":{"${shifts[0]?shifts[0].name:'A班'}":{"周一":"","周二":"","周三":"","周四":"","周五":"","周六":"","周日":""}${shifts.slice(1).map(s=>`,\n"${s.name}":{"周一":"","周二":"","周三":"","周四":"","周五":"","周六":"","周日":""}`).join('')}},"offDays":{"周一":[],"周二":[],"周三":[],"周四":[],"周五":[],"周六":[],"周日":[]},"violations":[],"warnings":[],"summary":"","anchorWeekly":{${anchors.map(a=>`"${a.name}":{"shifts":0,"off":0}`).join(',')}}}`;
 
 
-
-  // 云雾复制模式：直接复制 prompt 到剪贴板，不发请求
-  if(PROVIDERS[getProvider()] && PROVIDERS[getProvider()].format === 'copy'){
-    showLoading(false);
-    var fullPrompt = sysPrompt + '\n\n' + userPrompt;
-    try { await navigator.clipboard.writeText(fullPrompt); } catch(e){}
-    gotoPanel('result');
-    var container = document.getElementById('resultContent');
-    container.innerHTML = '<div class="alert alert-info" style="margin-bottom:16px">📋 <strong>Prompt 已复制到剪贴板！</strong></div>'
-      + '<div class="card" style="margin-bottom:16px;padding:16px">'
-      + '<div style="font-size:13px;font-weight:600;margin-bottom:10px;color:var(--text)">使用步骤</div>'
-      + '<div style="font-size:13px;color:var(--text2);line-height:2">'
-      + '1. 打开 <a href="https://yunwu.ai" target="_blank" style="color:var(--accent2)">yunwu.ai</a> 或 Cherry Studio<br>'
-      + '2. 粘贴（Ctrl+V / Cmd+V）已复制的 Prompt<br>'
-      + '3. 发送后将AI回复的JSON复制回来<br>'
-      + '4. 点击下方「粘贴JSON结果」按钮导入排班表'
-      + '</div></div>'
-      + '<div class="form-group" style="margin-bottom:12px">'
-      + '<label style="font-size:12px;color:var(--text2)">粘贴 AI 返回的 JSON</label>'
-      + '<textarea id="manualJsonInput" style="min-height:120px;font-size:12px;font-family:monospace" placeholder="{&quot;schedule&quot;:{...},&quot;offDays&quot;:{...},...}"></textarea>'
-      + '</div>'
-      + '<div style="display:flex;gap:10px">'
-      + '<button class="btn btn-primary" onclick="importManualJson()">📥 导入排班结果</button>'
-      + '<button class="btn btn-ghost" onclick="copyPromptAgain()">📋 重新复制Prompt</button>'
-      + '</div>';
-    window._lastPrompt = fullPrompt;
-    return;
-  }
 
   let _rawText = '';
   try {
