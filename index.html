@@ -1587,21 +1587,35 @@ function renderAnchorList(){
   const ratingLabels = {S:'S · 顶尖',A:'A · 优秀',B:'B · 良好',C:'C · 普通'};
   const active = anchors.filter(a=>!a.disabled);
   const disabled = anchors.filter(a=>a.disabled);
-  let html = anchors.map((a,i)=>`
+  let html = anchors.map((a,i)=>{
+    // 允许班次标签
+    const allowedIds = a.allowedShifts && a.allowedShifts.length ? a.allowedShifts : null;
+    const shiftChips = shifts.map(s=>{
+      const allowed = !allowedIds || allowedIds.includes(s.id);
+      return `<span onclick="toggleAllowedShift(${i},'${s.id}')" style="cursor:pointer;display:inline-block;padding:2px 7px;border-radius:12px;font-size:10px;font-weight:600;margin:2px;
+        background:${allowed?'rgba(108,99,255,0.2)':'rgba(255,255,255,0.05)'};
+        color:${allowed?'var(--accent2)':'var(--text3)'};
+        border:1px solid ${allowed?'rgba(108,99,255,0.4)':'var(--border)'};
+        text-decoration:${allowed?'none':'line-through'}"
+        title="${allowed?'点击禁止此班次':'点击允许此班次'}">${s.name}</span>`;
+    }).join('');
+    return `
     <div class="anchor-row" style="${a.disabled?'opacity:0.45;':''}">
       <div class="anchor-avatar" style="${a.disabled?'background:rgba(255,255,255,0.05);color:var(--text3)':''}">
         ${a.name.slice(0,1)}
       </div>
-      <div class="anchor-info">
+      <div class="anchor-info" style="flex:1;min-width:0">
         <div class="anchor-name-text">${a.name}${a.disabled?' <span style="font-size:11px;color:var(--text3)">(已停用)</span>':''}</div>
-        <div class="anchor-meta">${a.ratingSource==='ai'||a.ratingSource==='rule'||a.ratingSource==='ai-rule'?'🤖 AI/规则评级':'手动设置'}</div>
+        <div class="anchor-meta" style="margin-top:3px">
+          <span style="font-size:10px;color:var(--text3);margin-right:4px">可上班次：</span>${shiftChips}
+        </div>
       </div>
       <div class="rating-group" style="${a.disabled?'pointer-events:none;opacity:0.5':''}">
         ${['S','A','B','C'].map(r=>`
           <button class="rating-btn ${a.rating===r?'sel-'+r:''}" onclick="setRating(${i},'${r}')">${r}</button>
         `).join('')}
       </div>
-      <span class="chip chip-${ratingColors[a.rating]}" style="margin-left:8px">${ratingLabels[a.rating]}</span>
+      <span class="chip chip-${ratingColors[a.rating]}" style="margin-left:8px;flex-shrink:0">${ratingLabels[a.rating]}</span>
       <div style="display:flex;gap:5px;margin-left:6px;flex-shrink:0">
         <button class="btn btn-ghost btn-sm" onclick="toggleAnchor(${i})" style="font-size:11px;padding:4px 10px;min-width:44px">
           ${a.disabled?'启用':'停用'}
@@ -1610,7 +1624,8 @@ function renderAnchorList(){
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
         </button>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   if(disabled.length>0){
     html += `<div style="font-size:11px;color:var(--text3);margin-top:6px;padding:0 4px">
       ℹ️ 停用的主播不参与本周排班，但数据保留。删除则永久移除。
@@ -1620,6 +1635,24 @@ function renderAnchorList(){
   document.getElementById('anchorCount').textContent =
     `${active.length}人参与排班${disabled.length>0?' · '+disabled.length+'人停用':''}`;
 }
+
+function toggleAllowedShift(anchorIdx, shiftId){
+  var a = anchors[anchorIdx];
+  // 默认无限制（allowedShifts为空=全部允许）
+  if(!a.allowedShifts || a.allowedShifts.length === 0){
+    // 首次点击：从全部允许，变成禁止这一个
+    a.allowedShifts = shifts.map(function(s){return s.id;}).filter(function(id){return id!==shiftId;});
+  } else if(a.allowedShifts.includes(shiftId)){
+    // 当前允许 → 变禁止
+    a.allowedShifts = a.allowedShifts.filter(function(id){return id!==shiftId;});
+    // 如果全部都禁了，恢复全部允许
+    if(a.allowedShifts.length === 0) a.allowedShifts = [];
+  } else {
+    // 当前禁止 → 变允许
+    a.allowedShifts = a.allowedShifts.concat([shiftId]);
+  }
+  renderAnchorList();
+}
 function addAnchor(){
   const n = document.getElementById('newAnchorName').value.trim();
   const r = document.getElementById('newAnchorRating').value;
@@ -1627,7 +1660,7 @@ function addAnchor(){
   if(anchors.find(a=>a.name===n)){alert('主播已存在');return;}
   // 警告临时/兼职名字
 
-  anchors.push({name:n, rating:r, disabled:false, ratingSource:'manual'});
+  anchors.push({name:n, rating:r, disabled:false, ratingSource:'manual', allowedShifts:[]});
   document.getElementById('newAnchorName').value='';
   renderAnchorList();
   refreshAllSelects();
@@ -2109,7 +2142,22 @@ function buildScheduleWithJS(activeAnchors, shifts, weeklyShifts, weeklyOff, min
   var fixedSlots = {};   // fixedSlots[di][shiftId] = name (锁死的格子)
   var bannedShifts = {}; // bannedShifts[name][di][shiftId] = true
 
-  activeAnchors.forEach(function(a){ blockedSlots[a.name]={}; bannedShifts[a.name]={}; });
+  activeAnchors.forEach(function(a){
+    blockedSlots[a.name]={};
+    bannedShifts[a.name]={};
+    // 如果设置了允许班次限制，把禁止的班次加入全周 bannedShifts
+    if(a.allowedShifts && a.allowedShifts.length > 0){
+      shifts.forEach(function(s){
+        if(!a.allowedShifts.includes(s.id)){
+          // 这个主播全周都不能上这个班次
+          for(var di2=0; di2<7; di2++){
+            if(!bannedShifts[a.name][di2]) bannedShifts[a.name][di2]={};
+            bannedShifts[a.name][di2][s.id]=true;
+          }
+        }
+      });
+    }
+  });
 
   if(specialRules){
     // 请假/休息日 → 全天封锁
@@ -2382,7 +2430,12 @@ async function generateSchedule(){
     _p.push('Here is a valid schedule that satisfies all constraints:');
     _p.push(JSON.stringify(baseResult.schedule));
     _p.push('');
-    _p.push('Anchors and tiers: '+activeAnchors.map(function(a){return a.name+'('+a.rating+')'+(a.ratingReason?' ['+a.ratingReason.slice(0,30)+']':'');}).join(', '));
+    _p.push('Anchors and tiers: '+activeAnchors.map(function(a){
+      var restrict = (a.allowedShifts && a.allowedShifts.length) ? ' [only-shifts:'+a.allowedShifts.join(',')+']' : '';
+      return a.name+'('+a.rating+')'+restrict+(a.ratingReason?' ['+a.ratingReason.slice(0,30)+']':'');
+    }).join(', '));
+    var shiftRestrictions = activeAnchors.filter(function(a){return a.allowedShifts&&a.allowedShifts.length;}).map(function(a){return a.name+' can ONLY work: '+a.allowedShifts.join(',');});
+    if(shiftRestrictions.length) _p.push('SHIFT RESTRICTIONS (hard rule): '+shiftRestrictions.join('; '));
     _p.push('Golden shifts (assign S/A tier): '+goldenShiftNames+' -> '+topAnchors.join(','));
     _p.push('Off-peak shifts (A+B班): assign B tier anchors for stability');
     _p.push('');
