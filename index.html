@@ -713,19 +713,16 @@
       </div>
 
       <div class="section">
-        <div class="section-header"><span class="section-title">人效优化策略</span><div class="section-line"></div></div>
+        <div class="section-header"><span class="section-title">人效优化策略（次要，先保证排齐）</span><div class="section-line"></div></div>
         <div class="card">
-          <div class="form-grid" style="gap:16px">
-            <div class="form-group">
-              <label>黄金时段（S/A级主播优先锁定）</label>
-              <select id="rGoldenSlot">
-                <option value="D">D班 18:00-22:00（默认黄金档）</option>
-                <option value="C">C班 14:00-18:00</option>
-                <option value="B">B班 10:00-14:00</option>
-                <option value="E">E班 22:00-02:00</option>
-                <option value="A">A班 06:00-10:00</option>
-              </select>
-            </div>
+          <div class="alert alert-info" style="margin-bottom:14px;font-size:12px">
+            📌 核心优先级：<strong>① 每天5班全排满</strong> → <strong>② 每人班次调休达标</strong> → <strong>③ 再考虑以下优化</strong>
+          </div>
+          <div class="form-group" style="margin-bottom:14px">
+            <label style="margin-bottom:8px;display:block">重点时段（可多选，S/A级主播优先安排这些班次）</label>
+            <div id="goldenSlotChecks" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+          </div>
+          <div class="form-grid" style="gap:16px;margin-bottom:14px">
             <div class="form-group">
               <label>优化核心目标</label>
               <select id="rOptGoal">
@@ -735,9 +732,9 @@
               </select>
             </div>
           </div>
-          <div class="form-group" style="margin-top:14px">
-            <label>补充排班策略说明（告诉AI你的特殊排班逻辑）</label>
-            <textarea id="rStrategy" placeholder="例：近期晚间流量明显更好，S级主播优先排D/E班；苑含笑擅长拉新，适合排A班起盘..."></textarea>
+          <div class="form-group">
+            <label>补充排班策略说明（告诉AI你的偏好，不影响基础合规）</label>
+            <textarea id="rStrategy" placeholder="例：D班和E班是黄金档，优先排能力强的主播；苑含笑适合早班拉新；兼职只在人手不足时临时顶班..."></textarea>
           </div>
         </div>
       </div>
@@ -1667,8 +1664,23 @@ function refreshSpecialSelects(){
 }
 function refreshAllSelects(){ refreshSpecialSelects(); refreshShiftSelects(); }
 function refreshShiftSelects(){
-  const el=document.getElementById('rGoldenSlot');
-  if(el) el.innerHTML=shifts.map(s=>`<option value="${s.id}">${s.name} ${s.start}-${s.end}</option>`).join('');
+  var container = document.getElementById('goldenSlotChecks');
+  if(!container) return;
+  // 默认勾选 D班和E班
+  var defaultGolden = ['D','E'];
+  container.innerHTML = shifts.map(function(s){
+    var checked = defaultGolden.includes(s.id) || container.querySelector('input[value="'+s.id+'"]')?.checked;
+    return '<label style="display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;background:var(--bg3);border:1px solid var(--border);cursor:pointer;font-size:12px">'
+      +'<input type="checkbox" value="'+s.id+'" '+(defaultGolden.includes(s.id)?'checked':'')
+      +' style="accent-color:#6c63ff;width:14px;height:14px">'
+      +s.name+' '+s.start+'-'+s.end+'</label>';
+  }).join('');
+}
+function getGoldenSlots(){
+  var checks = document.querySelectorAll('#goldenSlotChecks input[type=checkbox]:checked');
+  var result = [];
+  checks.forEach(function(c){ result.push(c.value); });
+  return result.length ? result : ['D'];
 }
 
 function renderAllSpecialLists(){
@@ -1997,7 +2009,7 @@ async function generateSchedule(){
   const weeklyOff=parseInt(document.getElementById('rWeeklyOff').value)||2;
   const minRest=parseInt(document.getElementById('rMinRest').value)||12;
   const maxCons=parseInt(document.getElementById('rMaxCons').value)||5;
-  const goldenSlot=document.getElementById('rGoldenSlot').value||'D';
+  // goldenSlot 已改为多选，由 getGoldenSlots() 获取
   const optGoal=document.getElementById('rOptGoal').value||'gpm';
   const strategy=document.getElementById('rStrategy').value.trim();
   const dataNote=document.getElementById('dataNote')?document.getElementById('dataNote').value.trim():'';
@@ -2032,32 +2044,26 @@ async function generateSchedule(){
   const sysPrompt=`You are a scheduling system. Output only valid JSON. No explanation, no markdown, no code blocks. Strictly follow all numeric constraints.`;
 
   const anchorNames = activeAnchors.map(function(a){ return a.name; }).join('、');
-  const userPrompt=`=== 排班任务 ===
-参与排班的主播（共${activeAnchors.length}人）：${anchorsList}
-【重要】只能排这${activeAnchors.length}个人，禁止出现任何其他名字！
-
-班次：${shiftsList}
-本周日期：${datesInfo}
-
-=== 硬性规则（违反即报错）===
-1. 每位主播每周恰好上 ${weeklyShifts} 个班次，恰好调休 ${weeklyOff} 天，共7天
-2. 每位主播每天最多出现1次（同一自然日只能在1个班次）
-3. 任意两次排班间隔 ≥ ${minRest} 小时（E班22:00-02:00结束后，下一班最早14:00）
-4. 最大连续工作天数 ≤ ${maxCons} 天
-5. offDays 每天必须列出当天调休的主播名字，7天调休人数总和 = ${activeAnchors.length} × ${weeklyOff} = ${activeAnchors.length * weeklyOff}
-
-=== 优化策略 ===
-黄金档：${goldenSlot}班优先排S/A级主播（${activeAnchors.filter(function(a){return a.rating==='S'||a.rating==='A';}).map(function(a){return a.name;}).join('、')||'无'}}）
-${strategy?'运营补充：'+strategy:''}
-${dataNote?'数据备注：'+dataNote:''}
-
-=== 特殊要求（最高优先级）===
-${specialStr||'无'}
-${memoryStr}
-
-=== 输出格式（只输出JSON，不要任何其他文字）===
-` + buildResultTemplate() + `
-`;
+  const goldenSlots = getGoldenSlots();
+  const goldenShiftNames = goldenSlots.map(function(id){ var s=shifts.find(function(x){return x.id===id;}); return s?s.name+s.start+'-'+s.end:id; }).join('、');
+  const topAnchors = activeAnchors.filter(function(a){return a.rating==='S'||a.rating==='A';}).map(function(a){return a.name;}).join('、')||'无';
+  const totalShiftsPerDay = shifts.length;
+  
+  // 逐天验证字符串：每天几个班，需要几个主播
+  const perDayCheck = '每天共'+totalShiftsPerDay+'个班次（'+shiftsList+'），每班1人，每天需要'+totalShiftsPerDay+'个不同的主播值班';
+  
+  const userPrompt = '【排班人员】共'+activeAnchors.length+'人：'+anchorsList+' 禁止出现名单外任何人名。 '
+   +'【班次】'+shiftsList+' '
+   +'【日期】'+datesInfo+' '
+   +'【第一优先级-每天排满】每天共'+shifts.length+'个班次每班1人，每天需'+shifts.length+'个不同主播值班，每个班次必须有人不得空缺。 '
+   +'【第二优先级-个人工时】每人每周值班'+weeklyShifts+'天调休'+weeklyOff+'天；同日同人只出现1次；E班次日不排A/B班；连续上班≤'+maxCons+'天；调休总格数='+activeAnchors.length*weeklyOff+'格需分配到offDays中。 '
+   +'【第三优先级-人效优化(前两项满足后才考虑)】重点时段'+goldenShiftNames+'优先排'+topAnchors+'；优化目标'+(optGoal==='gpm'?'GPM最大':'ROI最大')+'。 '
+   +(strategy?'运营建议：'+strategy+' ':'')
+   +(dataNote?'数据参考：'+dataNote+' ':'')
+   +'【特殊要求-最高优先级】'+(specialStr||'无')+' '
+   +(memoryStr?'【历史教训必须规避】'+memoryStr+' ':'')
+   +'【输出】只输出JSON不要任何解释：'
+   + buildResultTemplate();
 
 
 
@@ -2091,7 +2097,7 @@ ${memoryStr}
     const container = document.getElementById('resultContent');
     const rawPreview = _rawText ? '<div style="margin-bottom:12px"><div style="font-size:12px;color:var(--text3);margin-bottom:6px">AI 原始返回（供排查）：</div><pre style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:11px;color:var(--text2);white-space:pre-wrap;word-break:break-all;max-height:280px;overflow-y:auto">'+_rawText.replace(/</g,'&lt;').slice(0,2000)+'</pre></div>' : '';
     container.innerHTML = '<div class="alert alert-error" style="margin-bottom:12px">❌ 排班生成失败：'+err.message+'</div>'
-      + '<div class="alert alert-warn" style="margin-bottom:12px">请检查：①API Key正确 ②服务商匹配 ③账户有余额</div>'
+      + '<div class="alert alert-warn" style="margin-bottom:12px">请检查：①API Key正确 ②服务商匹配 ③账户余额充足<br>当前模型：<strong>'+getModel()+'</strong>，若报400/模型不存在，请在左侧切换到其他模型</div>'
       + rawPreview
       + '<button class="btn btn-primary" onclick="gotoPanel(&quot;generate&quot;)">🔄 重新生成</button>';
   } finally {
@@ -2409,10 +2415,10 @@ function renderResult(data, days){
     ${dayNames.map((d,i)=>`<th>${d}<br><span style="font-weight:400;font-size:11px;color:var(--text3)">${fmt(days[i])}</span></th>`).join('')}
   </tr></thead><tbody>`;
 
-  const goldenShift=document.getElementById('rGoldenSlot').value||'D';
+  const goldenShift = (typeof getGoldenSlots==='function') ? getGoldenSlots() : ['D'];
   shifts.forEach(s=>{
     const row=data.schedule?.[s.name]||data.schedule?.[s.id+'班']||data.schedule?.[s.id]||{};
-    const isGolden=s.id===goldenShift;
+    const isGolden=Array.isArray(goldenShift)?goldenShift.includes(s.id):(s.id===goldenShift);
     html+=`<tr>
       <td class="shift-label" style="${isGolden?'color:var(--gold)':''}">
         ${isGolden?'⭐':''} ${s.name} ${s.start}-${s.end}
@@ -2561,7 +2567,7 @@ function saveAllSettings() {
       weeklyOff:    document.getElementById('rWeeklyOff').value,
       minRest:      document.getElementById('rMinRest').value,
       maxCons:      document.getElementById('rMaxCons').value,
-      goldenSlot:   document.getElementById('rGoldenSlot').value,
+      goldenSlot:   (typeof getGoldenSlots==='function'?getGoldenSlots():['D']),
       optGoal:      document.getElementById('rOptGoal').value,
       strategy:     document.getElementById('rStrategy').value,
       dataNote:     document.getElementById('dataNote') ? document.getElementById('dataNote').value : ''
@@ -2612,7 +2618,13 @@ function loadAllSettings() {
       if(rules.weeklyOff)    document.getElementById('rWeeklyOff').value    = rules.weeklyOff;
       if(rules.minRest)      document.getElementById('rMinRest').value      = rules.minRest;
       if(rules.maxCons)      document.getElementById('rMaxCons').value      = rules.maxCons;
-      if(rules.goldenSlot) { var gs = document.getElementById('rGoldenSlot'); if(gs) gs.value = rules.goldenSlot; }
+      if(rules.goldenSlot && Array.isArray(rules.goldenSlot)) {
+        // 恢复多选状态（在 refreshShiftSelects 之后）
+        setTimeout(function(){
+          var checks = document.querySelectorAll('#goldenSlotChecks input[type=checkbox]');
+          checks.forEach(function(cb){ cb.checked = rules.goldenSlot.includes(cb.value); });
+        }, 300);
+      }
       if(rules.optGoal)    { var og = document.getElementById('rOptGoal');    if(og) og.value = rules.optGoal; }
       if(rules.strategy)   { var st = document.getElementById('rStrategy');   if(st) st.value = rules.strategy; }
       if(rules.dataNote)   { var dn = document.getElementById('dataNote');    if(dn) dn.value = rules.dataNote; }
@@ -2683,7 +2695,7 @@ function confirmClear() {
       document.getElementById('rWeeklyOff').value    = '2';
       document.getElementById('rMinRest').value      = '12';
       document.getElementById('rMaxCons').value      = '5';
-      var gs=document.getElementById('rGoldenSlot'); if(gs) gs.selectedIndex=0;
+      var checks=document.querySelectorAll('#goldenSlotChecks input[type=checkbox]'); checks.forEach(function(c){c.checked=(c.value==='D'||c.value==='E');});
       var og=document.getElementById('rOptGoal');    if(og) og.selectedIndex=0;
       var st=document.getElementById('rStrategy');   if(st) st.value='';
       var dn=document.getElementById('dataNote');    if(dn) dn.value='';
