@@ -1002,7 +1002,7 @@
         <button class="btn btn-primary" onclick="generateSchedule()" style="padding:14px 40px;font-size:15px;border-radius:12px">
           🤖 AI 智能生成排班
         </button>
-        <div style="font-size:12px;color:var(--text3);margin-top:10px">将调用 Claude Sonnet API · 约10-20秒</div>
+        <div style="font-size:12px;color:var(--text3);margin-top:10px">💡 推荐：<strong style='color:var(--accent2)'>硅基流动 deepseek-v3</strong> 或 <strong style='color:var(--accent2)'>Anthropic claude-haiku</strong>，JSON输出最稳定</div>
       </div>
     </div>
 
@@ -1055,7 +1055,7 @@ const PROVIDERS = {
   anthropic: {
     label: 'Anthropic',
     baseUrl: 'https://api.anthropic.com/v1/messages',
-    models: ['claude-haiku-4-5-20251001','claude-sonnet-4-20250514','claude-opus-4-20250514'],
+    models: ['claude-3-5-haiku-20241022','claude-haiku-4-5-20251001','claude-3-5-sonnet-20241022','claude-sonnet-4-20250514'],
     format: 'anthropic',
     keyHint: 'sk-ant-...',
     keyCheck: k => k.startsWith('sk-ant-') && k.length > 20
@@ -1063,7 +1063,7 @@ const PROVIDERS = {
   siliconflow: {
     label: '硅基流动',
     baseUrl: 'https://api.siliconflow.cn/v1/chat/completions',
-    models: ['Qwen/Qwen3-7B','Qwen/Qwen3-8B','Pro/Qwen/Qwen3-8B','Qwen/Qwen3-14B','Qwen/Qwen3-32B','deepseek-ai/DeepSeek-V3','Pro/deepseek-ai/DeepSeek-V3'],
+    models: ['deepseek-ai/DeepSeek-V3','Pro/deepseek-ai/DeepSeek-V3','Qwen/Qwen3-8B','Pro/Qwen/Qwen3-8B','Qwen/Qwen3-14B','Qwen/Qwen3-32B'],
     format: 'openai',
     keyHint: 'sk-...',
     keyCheck: k => k.startsWith('sk-') && k.length > 10
@@ -2091,145 +2091,169 @@ function buildResultTemplate(){
 async function generateSchedule(){
   const key=getApiKey();
   if(!key){ alert('请先在左侧选择服务商并填入 API Key'); return; }
+  if(window._isGenerating){ showToast('⏳ 生成中，请勿重复点击'); return; }
+  window._isGenerating = true;
 
   const days=getWeekDates(weekOffset);
   const weeklyShifts=parseInt(document.getElementById('rWeeklyShifts').value)||5;
   const weeklyOff=parseInt(document.getElementById('rWeeklyOff').value)||2;
   const minRest=parseInt(document.getElementById('rMinRest').value)||12;
   const maxCons=parseInt(document.getElementById('rMaxCons').value)||5;
-  // goldenSlot 已改为多选，由 getGoldenSlots() 获取
   const optGoal=document.getElementById('rOptGoal').value||'gpm';
   const strategy=document.getElementById('rStrategy').value.trim();
   const dataNote=document.getElementById('dataNote')?document.getElementById('dataNote').value.trim():'';
-  const uploadedStats=window._dataSummary||'';
 
-  if(window._isGenerating){ showToast('⏳ 生成中，请勿重复点击'); return; }
-  window._isGenerating = true;
-  // 根据主播数 & 班次数预估时间：Haiku约15s，Sonnet约30s，其他约20s
-  const modelNow = getModel();
-  // 两阶段推理，时间翻倍
-  const estMs = modelNow.includes('haiku')||modelNow.includes('7B')||modelNow.includes('8B') ? 30000
-              : modelNow.includes('sonnet')||modelNow.includes('14B') ? 55000 : 40000;
-  showLoading(true, '正在构建请求...', {estimatedMs: estMs, title:'AI 智能排班推演中', icon:'🤖'});
+  const activeAnchors=anchors.filter(function(a){return !a.disabled;});
+  if(!activeAnchors.length){ alert('请先在主播管理中添加主播'); window._isGenerating=false; return; }
 
-  const activeAnchors=anchors.filter(a=>!a.disabled);
-  const anchorsList=activeAnchors.map(a=>`${a.name}(${a.rating}级)`).join('、');
-  const shiftsList=shifts.map(s=>`${s.id}班(${s.start}-${s.end})`).join('、');
-  const datesInfo=days.map((d,i)=>`${dayName(i)}=${fmtFull(d)}`).join('、');
-  const shiftNames=shifts.map(s=>s.name).join('、');
-
-  let specialStr='';
-  if(special.leaves.length) specialStr+='\n【请假】\n'+special.leaves.map(l=>`- ${l.anchor} 在 ${l.date} 全天请假，不可排任何班次${l.note?' ('+l.note+')':''}`).join('\n');
-  if(special.fixedOn.length) specialStr+='\n【必须排班（锁死）】\n'+special.fixedOn.map(r=>`- ${r.anchor} 在 ${r.date} 的 ${r.shiftLabel} 必须排班，不可更改${r.note?' ('+r.note+')':''}`).join('\n');
-  if(special.fixedOff.length) specialStr+='\n【不可排班】\n'+special.fixedOff.map(r=>`- ${r.anchor} 在 ${r.date} 不可安排 ${r.shiftLabel}${r.note?' ('+r.note+')':''}`).join('\n');
-  if(special.restDays.length) specialStr+='\n【指定休息日】\n'+special.restDays.map(r=>`- ${r.anchor} 在 ${r.date} 全天休息(${r.type==='counted'?'计入调休名额':'额外休息不占名额'})${r.note?' ('+r.note+')':''}`).join('\n');
-  if(special.events.length) specialStr+='\n【大场/活动】\n'+special.events.map(e=>`- ${e.date} 活动【${e.name}】${e.anchors.length?'，指定主播 '+e.anchors.join('、')+' 必须参加':''}${e.shiftId?' ('+e.shiftLabel+')':''}`).join('\n');
+  // ── JS预计算：每个主播哪些天不能上班 ──
+  const dayNames=['周一','周二','周三','周四','周五','周六','周日'];
+  var blocked = {}; // blocked[姓名][日期索引] = true
+  activeAnchors.forEach(function(a){ blocked[a.name]={}; });
+  // 处理请假
+  special.leaves.forEach(function(l){
+    var di = days.findIndex(function(d){return fmtFull(d)===l.date;});
+    if(di>=0 && blocked[l.anchor]) blocked[l.anchor][di]=true;
+  });
+  // 处理指定休息日
+  special.restDays.forEach(function(r){
+    var di = days.findIndex(function(d){return fmtFull(d)===r.date;});
+    if(di>=0 && blocked[r.anchor]) blocked[r.anchor][di]=true;
+  });
+  // 计算可用天数
+  var anchorAvail = activeAnchors.map(function(a){
+    var avail=[];
+    dayNames.forEach(function(dn,di){
+      if(!blocked[a.name][di]) avail.push(dn);
+    });
+    return {name:a.name, rating:a.rating, reason:a.ratingReason||'', avail:avail};
+  });
 
   // 读取学习记忆
-  var _memory = [];
-  try { _memory = JSON.parse(localStorage.getItem('sch_memory')||'[]'); } catch(e){}
-  var memoryStr = _memory.length ? '\n\n历史调试经验（必须吸取教训）：\n'+_memory.slice(-5).map(function(m,i){ return (i+1)+'. '+m; }).join('\n') : '';
+  var _memory=[];
+  try{_memory=JSON.parse(localStorage.getItem('sch_memory')||'[]');}catch(e){}
 
-  // ── 构建上下文 ──
-  const goldenSlots = getGoldenSlots();
-  const goldenShiftNames = goldenSlots.map(function(id){
-    var s=shifts.find(function(x){return x.id===id;});
-    return s ? s.name+'('+s.start+'-'+s.end+')' : id;
-  }).join('、');
-  const topAnchors = activeAnchors.filter(function(a){return a.rating==='S'||a.rating==='A';}).map(function(a){return a.name+'('+a.rating+'级)';}).join('、') || '无';
-  const midAnchors = activeAnchors.filter(function(a){return a.rating==='B';}).map(function(a){return a.name;}).join('、') || '无';
-  const juniorAnchors = activeAnchors.filter(function(a){return a.rating==='C';}).map(function(a){return a.name;}).join('、') || '无';
+  // 特殊要求文本
+  var specialLines=[];
+  special.leaves.forEach(function(l){specialLines.push(l.anchor+' '+l.date+' 全天请假');});
+  special.fixedOn.forEach(function(r){specialLines.push(l.anchor+' '+r.date+' '+r.shiftLabel+' 必须上班');});
+  special.fixedOff.forEach(function(r){specialLines.push(r.anchor+' '+r.date+' '+r.shiftLabel+' 不能上班');});
+  special.events.forEach(function(e){specialLines.push(e.date+' 活动'+e.name+(e.anchors.length?' 必须到场:'+e.anchors.join(','):''));});
 
-  // ── Phase 1: 让 AI 先做推理规划，不要求输出JSON ──
-  // ── 构建 Phase1 Prompt（只推理，不要 JSON）──
-  const NL='\n';
-  const ctxStr =
-    '主播（只能用这些人）：'+activeAnchors.map(function(a){
-      return a.name+'('+a.rating+'级'+(a.ratingReason?'/'+a.ratingReason.slice(0,30):'')+')';
-    }).join('、')
-    +' | 班次：'+shiftsList
-    +' | 日期：'+datesInfo
-    +' | 规则：每人'+weeklyShifts+'班+'+weeklyOff+'调休；每天'+shifts.length+'班全满；E班后≥'+minRest+'h；连续≤'+maxCons+'天'
-    +' | 黄金档：'+goldenShiftNames+'排'+topAnchors
-    +' | 中坚：'+midAnchors
-    +(specialStr?' | 特殊：'+specialStr:'')
-    +(strategy?' | 策略：'+strategy:'')
-    +(memoryStr?' | 历史教训：'+memoryStr:'');
+  const goldenSlots=getGoldenSlots();
+  const topAnchors=activeAnchors.filter(function(a){return a.rating==='S'||a.rating==='A';}).map(function(a){return a.name;});
+  const midAnchors=activeAnchors.filter(function(a){return a.rating==='B';}).map(function(a){return a.name;});
 
-  const phase1Sys = 'You are a live-streaming scheduling expert. Reason step by step in Chinese.';
-  const phase1User = '根据以下信息，逐步推演本周最优排班方案（只写推理，不要输出JSON）：'+NL+NL
-    +ctxStr+NL+NL
-    +'推理要求：'+NL
-    +'1. 先列出每位主播本周可以上的天数和不能上的天数（考虑E班冷却、连续天数）'+NL
-    +'2. 按"田忌赛马"原则，确定每个班次最适合的主播（黄金档给销冠，波谷给稳定型）'+NL
-    +'3. 逐天分配：周一到周日，每天5个班次各是谁，为什么'+NL
-    +'4. 验证：每人班次数和调休数是否达标，有无E班接早班的违规'+NL
-    +'用中文推理，要具体到姓名和班次。';
+  // 预估时间（单次请求）
+  const modelNow=getModel();
+  const estMs=modelNow.includes('haiku')||modelNow.includes('7B')||modelNow.includes('8B')?20000
+    :modelNow.includes('sonnet')||modelNow.includes('14B')?35000:25000;
 
-  // ── Phase2 Prompt（基于推理输出 JSON）──
-  const phase2Sys = 'You are a JSON generator. Output ONLY valid JSON. No explanation. No markdown. No code blocks.';
+  showLoading(true,'AI排班生成中...（首选 deepseek-v3）',{estimatedMs:estMs,title:'AI排班推演',icon:'🤖'});
 
-  showLoading(true, '第1步：AI推演排班逻辑（约'+Math.round(estMs*0.55/1000)+'秒）...', {estimatedMs: estMs*0.55, title:'🧠 策略推演中', icon:'🧠'});
+  // ── 构建超结构化单阶段Prompt ──
+  // 关键：给AI一个已经填好示例的表格模板，它只需要替换姓名
+  var shiftKeys=shifts.map(function(s){return s.name;});
+  var anchorNames=activeAnchors.map(function(a){return a.name;});
 
-  let _rawText = '';
-  let _phase1Text = '';
+  // 示例行：用第一个主播名填满作为示例
+  var exampleRow={};
+  dayNames.forEach(function(d){exampleRow[d]=anchorNames[0]||'姓名';});
+  var exampleSchedule={};
+  shiftKeys.forEach(function(k){exampleSchedule[k]=Object.assign({},exampleRow);});
+
+  var sysPrompt='You are a precise JSON scheduling assistant. Output ONLY valid JSON. No text before or after.';
+
+  // 核心：把约束转成具体的表格填写指令
+  var _p=[];
+  _p.push('Fill this schedule table with real anchor names. Output ONLY the completed JSON.');
+  _p.push('');
+  _p.push('=== ANCHORS (ONLY use these exact names, nothing else) ===');
+  activeAnchors.forEach(function(a){
+    var av=anchorAvail.find(function(x){return x.name===a.name;});
+    _p.push(a.name+' ['+a.rating+'] available-days:'+(av?av.avail.join(','):'all')+(a.ratingReason?' perf:'+a.ratingReason.slice(0,40):''));
+  });
+  _p.push('');
+  _p.push('=== SHIFTS (fill ALL, no empty) ===');
+  _p.push(shifts.map(function(s){return s.name+'('+s.start+'-'+s.end+')';}).join(', '));
+  _p.push('');
+  _p.push('=== DAYS ===');
+  _p.push(dayNames.map(function(d,i){return d+'='+fmtFull(days[i]);}).join(', '));
+  _p.push('');
+  _p.push('=== HARD RULES ===');
+  _p.push('1. Each anchor: EXACTLY '+weeklyShifts+' working days + EXACTLY '+weeklyOff+' rest days');
+  _p.push('2. Each anchor: AT MOST ONCE per day');
+  _p.push('3. After E-shift(22-02): next shift >= '+minRest+'h later (skip A+B next day)');
+  _p.push('4. Max '+maxCons+' consecutive days');
+  _p.push('5. EVERY shift cell must have exactly ONE anchor name (no empty, no null)');
+  _p.push('6. Total offDays entries = '+(activeAnchors.length*weeklyOff)+' ('+activeAnchors.length+' x '+weeklyOff+')');
+  _p.push('');
+  _p.push('=== PRIORITY (Tian Ji Horse Racing) ===');
+  _p.push('Golden shifts ('+goldenSlots.map(function(id){var s=shifts.find(function(x){return x.id===id;});return s?s.name:'';}).join('+')+') -> assign S/A tier first: '+topAnchors.join(','));
+  _p.push('Off-peak (A+B shifts) -> stable B tier: '+midAnchors.join(','));
+  _p.push('Prefer rest distribution: 2-3 work then 1 rest (not 6 work then 2 rest)');
+  if(strategy) _p.push('Extra: '+strategy);
+  if(dataNote) _p.push('Data notes: '+dataNote);
+  if(_memory.length) _p.push('Avoid these past mistakes: '+_memory.slice(-3).join('; '));
+  if(specialLines.length) _p.push('Special overrides: '+specialLines.join('; '));
+  _p.push('');
+  _p.push('=== OUTPUT (copy structure below, fill ALL "ANCHOR_NAME" with real names from the list above) ===');
+  _p.push(JSON.stringify({
+    schedule:(function(){var o={};shiftKeys.forEach(function(k){var r={};dayNames.forEach(function(d){r[d]='ANCHOR_NAME';});o[k]=r;});return o;})(),
+    offDays:(function(){var o={};dayNames.forEach(function(d){o[d]=[];});return o;})(),
+    violations:[],
+    warnings:[],
+    summary:'schedule summary here',
+    anchorWeekly:(function(){var o={};anchorNames.forEach(function(n){o[n]={shifts:weeklyShifts,off:weeklyOff};});return o;})()
+  },null,2));
+  var userPrompt=_p.join('\n');
+
+  var _rawText='';
   try {
-    // Phase1：让 AI 自由推理，给足 token
-    _phase1Text = await callLLM(phase1Sys, phase1User, 2000);
-    window._lastPlan = _phase1Text;
+    _rawText = await callLLM(sysPrompt, userPrompt, 2500);
+    window._lastPlan = 'Model:'+getModel()+'|Raw:'+_rawText.slice(0,300);
 
-    // Phase2：把推理结果 + 格式要求传入，专门生成 JSON
-    showLoading(true, '第2步：生成排班表（约'+Math.round(estMs*0.45/1000)+'秒）...', {estimatedMs: estMs*0.45, title:'📋 生成排班表', icon:'📋'});
-    // 简化的 Phase2 prompt，减少模型生成出错概率
-    var shiftNameList = shifts.map(function(s){return s.name;}).join(',');
-    var anchorNameList = activeAnchors.map(function(a){return a.name;}).join(',');
-    var dayList = '周一,周二,周三,周四,周五,周六,周日';
-    var phase2User = '根据排班方案转换为JSON。只输出JSON，不要任何其他文字。'+NL
-      +'排班方案：'+_phase1Text.slice(0,1500)+NL+NL
-      +'要求：'+NL
-      +'- 只能使用这些主播名字：'+anchorNameList+NL
-      +'- 每人每周值班'+weeklyShifts+'天，调休'+weeklyOff+'天'+NL
-      +'- schedule的key为班次名（'+shiftNameList+'），value为{周一:姓名,...,周日:姓名}'+NL
-      +'- offDays的key为星期（'+dayList+'），value为当天调休主播数组'+NL
-      +'- anchorWeekly记录每人实际shifts和off数量'+NL+NL
-      +'输出格式示例（直接替换姓名，不要留空字符串）：'+NL
-      +'{'+NL
-      +'  "schedule":{'+NL
-      +shiftNameList.split(',').map(function(sn){
-        return '    "'+sn+'":{'+dayList.split(',').map(function(d){return '"'+d+'":"主播姓名"';}).join(',')+'}';
-      }).join(','+NL)+NL
-      +'  },'+NL
-      +'  "offDays":{"周一":["姓名"],"周二":[],"周三":[],"周四":[],"周五":[],"周六":[],"周日":[]},'+NL
-      +'  "violations":[],'+NL
-      +'  "warnings":[],'+NL
-      +'  "summary":"一句话说明排班逻辑",'+NL
-      +'  "anchorWeekly":{'+anchorNameList.split(',').map(function(n){return '"'+n+'":{"shifts":5,"off":2}';}).join(',')+'}'+NL
-      +'}';
 
-    _rawText = await callLLM(phase2Sys, phase2User, 2000);
 
-    // 解析 JSON
     const result = repairAndParseJSON(_rawText);
-    window._lastPlan = _phase1Text; // 保留推理过程
+
+    // JS端校验+自动修正：确保所有班次都有人
+    shiftKeys.forEach(function(sk){
+      if(!result.schedule[sk]) result.schedule[sk]={};
+      dayNames.forEach(function(d){
+        if(!result.schedule[sk][d] || typeof result.schedule[sk][d]!=='string' || !result.schedule[sk][d].trim()){
+          // 空格填充：找一个当天最少出现的主播
+          var counts={};
+          anchorNames.forEach(function(n){counts[n]=0;});
+          shiftKeys.forEach(function(sk2){
+            var nm=result.schedule[sk2]&&result.schedule[sk2][d];
+            if(nm && counts[nm]!==undefined) counts[nm]++;
+          });
+          var leastUsed=anchorNames.slice().sort(function(a,b){return counts[a]-counts[b];})[0];
+          result.schedule[sk][d]=leastUsed;
+        }
+        // 确保名字在花名册里
+        if(!anchorNames.includes(result.schedule[sk][d])){
+          result.schedule[sk][d]=anchorNames[0];
+        }
+      });
+    });
 
     showLoading(false);
-    lastResult = result;
-    renderResult(result, days);
-    window._isGenerating = false;
+    lastResult=result;
+    renderResult(result,days);
+    window._isGenerating=false;
     gotoPanel('result');
   } catch(err){
     showLoading(false);
-    window._isGenerating = false;
+    window._isGenerating=false;
     gotoPanel('result');
-    const container = document.getElementById('resultContent');
-    const planPreview = _phase1Text
-      ? '<details style="margin-bottom:12px"><summary style="font-size:12px;color:var(--text3);cursor:pointer">📄 查看AI推理过程</summary><pre style="background:var(--bg3);border-radius:8px;padding:10px;font-size:11px;color:var(--text2);white-space:pre-wrap;max-height:200px;overflow-y:auto;margin-top:8px">'+_phase1Text.replace(/</g,'&lt;').slice(0,2000)+'</pre></details>' : '';
-    const jsonPreview = _rawText
-      ? '<details style="margin-bottom:12px"><summary style="font-size:12px;color:var(--text3);cursor:pointer">📄 查看原始JSON输出</summary><pre style="background:var(--bg3);border-radius:8px;padding:10px;font-size:11px;color:var(--text2);white-space:pre-wrap;max-height:150px;overflow-y:auto;margin-top:8px">'+_rawText.replace(/</g,'&lt;').slice(0,1000)+'</pre></details>' : '';
-    container.innerHTML = '<div class="alert alert-error" style="margin-bottom:12px">❌ 排班生成失败：'+err.message+'</div>'
-      + '<div class="alert alert-warn" style="margin-bottom:12px">当前模型：<strong>'+getModel()+'</strong>。若报400请切换模型；若JSON解析失败可点重新生成再试。</div>'
-      + planPreview + jsonPreview
-      + '<button class="btn btn-primary" onclick="gotoPanel(&quot;generate&quot;)">🔄 重新生成</button>';
+    var container=document.getElementById('resultContent');
+    var rawPrev=_rawText?'<details style="margin-bottom:10px"><summary style="font-size:12px;color:var(--text3);cursor:pointer">查看原始输出</summary><pre style="background:var(--bg3);border-radius:8px;padding:10px;font-size:11px;color:var(--text2);white-space:pre-wrap;max-height:200px;overflow-y:auto;margin-top:6px">'+_rawText.replace(/</g,'&lt;').slice(0,2000)+'</pre></details>':'';
+    container.innerHTML='<div class="alert alert-error" style="margin-bottom:12px">❌ '+err.message+'</div>'
+      +'<div class="alert alert-info" style="margin-bottom:12px">💡 推荐使用 <strong>deepseek-v3</strong>（硅基流动）或 <strong>claude-haiku</strong>，这两个模型的JSON输出最稳定</div>'
+      +rawPrev
+      +'<button class="btn btn-primary" onclick="gotoPanel(&quot;generate&quot;)">🔄 重新生成</button>';
   }
 }
 
