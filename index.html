@@ -48,6 +48,8 @@
     padding: 0;
     position: fixed; top: 0; left: 0; bottom: 0;
     z-index: 100;
+    overflow-y: auto;
+    overflow-x: hidden;
   }
   .main { margin-left: 220px; flex: 1; padding: 32px 40px; max-width: 1100px; }
 
@@ -64,7 +66,7 @@
   }
   .logo-sub { font-size: 11px; color: var(--text3); margin-top: 3px; }
 
-  .nav { padding: 12px 10px; flex: 1; }
+  .nav { padding: 12px 10px; }
   .nav-item {
     display: flex; align-items: center; gap: 10px;
     padding: 10px 12px; border-radius: var(--radius);
@@ -1056,7 +1058,26 @@ const PROVIDERS = {
   yunwu: {
     label: '云雾API',
     baseUrl: 'https://yunwu.ai/v1/chat/completions',
-    models: ['gpt-4o','gpt-4o-mini','claude-3-5-sonnet-20241022','claude-3-5-haiku-20241022','deepseek-chat','deepseek-v3','gemini-1.5-pro'],
+    models: [
+      'claude-sonnet-4-20250514',
+      'claude-haiku-4-5-20251001',
+      'claude-3-5-sonnet-20241022',
+      'claude-3-5-haiku-20241022',
+      'claude-3-haiku-20240307',
+      'deepseek-v3',
+      'deepseek-v3-0324',
+      'deepseek-chat',
+      'deepseek-r1',
+      'gpt-4o',
+      'gpt-4o-mini',
+      'gpt-4o-mini-tts',
+      'gemini-2.5-pro',
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'qwen3-32b',
+      'qwen3-14b',
+      'qwen3-8b'
+    ],
     format: 'openai',
     keyHint: 'sk-...',
     keyCheck: function(k){ return k.startsWith('sk-') && k.length > 10; }
@@ -1933,6 +1954,24 @@ function refreshGeneratePage(){
 }
 
 // ========== GENERATE ==========
+
+function buildResultTemplate(){
+  var activeList = anchors.filter(function(a){ return !a.disabled; });
+  var shiftKeys = shifts.map(function(s){ return s.name; });
+  var days = ['周一','周二','周三','周四','周五','周六','周日'];
+  var schedObj = {};
+  shiftKeys.forEach(function(k){ 
+    var row = {}; 
+    days.forEach(function(d){ row[d]=''; }); 
+    schedObj[k]=row; 
+  });
+  var offObj = {};
+  days.forEach(function(d){ offObj[d]=[]; });
+  var weeklyObj = {};
+  activeList.forEach(function(a){ weeklyObj[a.name]={'shifts':0,'off':0}; });
+  return JSON.stringify({schedule:schedObj,offDays:offObj,violations:[],warnings:[],summary:'',anchorWeekly:weeklyObj});
+}
+
 async function generateSchedule(){
   const key=getApiKey();
   if(!key){ alert('请先在左侧选择服务商并填入 API Key'); return; }
@@ -1967,20 +2006,40 @@ async function generateSchedule(){
   if(special.restDays.length) specialStr+='\n【指定休息日】\n'+special.restDays.map(r=>`- ${r.anchor} 在 ${r.date} 全天休息(${r.type==='counted'?'计入调休名额':'额外休息不占名额'})${r.note?' ('+r.note+')':''}`).join('\n');
   if(special.events.length) specialStr+='\n【大场/活动】\n'+special.events.map(e=>`- ${e.date} 活动【${e.name}】${e.anchors.length?'，指定主播 '+e.anchors.join('、')+' 必须参加':''}${e.shiftId?' ('+e.shiftLabel+')':''}`).join('\n');
 
-  const sysPrompt=`你是排班系统，严格遵守约束，只输出JSON，不加任何解释或代码块。`;
+  // 读取学习记忆
+  var _memory = [];
+  try { _memory = JSON.parse(localStorage.getItem('sch_memory')||'[]'); } catch(e){}
+  var memoryStr = _memory.length ? '\n\n历史调试经验（必须吸取教训）：\n'+_memory.slice(-5).map(function(m,i){ return (i+1)+'. '+m; }).join('\n') : '';
 
-  const userPrompt=`主播:${anchorsList}
-班次:${shiftsList}
-日期:${datesInfo}
-规则:每人${weeklyShifts}班+调休${weeklyOff}天;同日最多1班;班次间隔≥${minRest}h;禁夜班(22-02)接早班(06-14);最多连续${maxCons}天
-黄金档:${goldenSlot}班排S/A级;目标:${optGoal==='gpm'?'GPM最大':'ROI最大'}
-${strategy?'运营:'+strategy:''}${dataNote?'\n备注:'+dataNote:''}
+  const sysPrompt=`你是专业的直播间排班AI，必须100%严格遵守所有数字约束。只输出合法JSON，不加任何解释或代码块标记。`;
 
+  const anchorNames = activeAnchors.map(function(a){ return a.name; }).join('、');
+  const userPrompt=`=== 排班任务 ===
+参与排班的主播（共${activeAnchors.length}人）：${anchorsList}
+【重要】只能排这${activeAnchors.length}个人，禁止出现任何其他名字！
 
-特殊:${specialStr||'无'}
+班次：${shiftsList}
+本周日期：${datesInfo}
 
-输出纯JSON（不要代码块，不要任何解释文字），格式：
-{"schedule":{"${shifts[0]?shifts[0].name:'A班'}":{"周一":"","周二":"","周三":"","周四":"","周五":"","周六":"","周日":""}${shifts.slice(1).map(s=>`,\n"${s.name}":{"周一":"","周二":"","周三":"","周四":"","周五":"","周六":"","周日":""}`).join('')}},"offDays":{"周一":[],"周二":[],"周三":[],"周四":[],"周五":[],"周六":[],"周日":[]},"violations":[],"warnings":[],"summary":"","anchorWeekly":{${anchors.map(a=>`"${a.name}":{"shifts":0,"off":0}`).join(',')}}}`;
+=== 硬性规则（违反即报错）===
+1. 每位主播每周恰好上 ${weeklyShifts} 个班次，恰好调休 ${weeklyOff} 天，共7天
+2. 每位主播每天最多出现1次（同一自然日只能在1个班次）
+3. 任意两次排班间隔 ≥ ${minRest} 小时（E班22:00-02:00结束后，下一班最早14:00）
+4. 最大连续工作天数 ≤ ${maxCons} 天
+5. offDays 每天必须列出当天调休的主播名字，7天调休人数总和 = ${activeAnchors.length} × ${weeklyOff} = ${activeAnchors.length * weeklyOff}
+
+=== 优化策略 ===
+黄金档：${goldenSlot}班优先排S/A级主播（${activeAnchors.filter(function(a){return a.rating==='S'||a.rating==='A';}).map(function(a){return a.name;}).join('、')||'无'}}）
+${strategy?'运营补充：'+strategy:''}
+${dataNote?'数据备注：'+dataNote:''}
+
+=== 特殊要求（最高优先级）===
+${specialStr||'无'}
+${memoryStr}
+
+=== 输出格式（只输出JSON，不要任何其他文字）===
+` + buildResultTemplate() + `
+`;
 
 
 
@@ -2007,6 +2066,167 @@ ${strategy?'运营:'+strategy:''}${dataNote?'\n备注:'+dataNote:''}
       + rawPreview
       + '<button class="btn btn-primary" onclick="gotoPanel(&quot;generate&quot;)">🔄 重新生成</button>';
   }
+}
+
+
+// ========== 评分 & 调试 & 学习记忆 ==========
+
+function renderScoreCards(data){
+  var el = document.getElementById('scoreCards');
+  if(!el || !data) return;
+  var days = ['周一','周二','周三','周四','周五','周六','周日'];
+  var activeList = anchors.filter(function(a){ return !a.disabled; });
+  var weeklyShifts = parseInt(document.getElementById('rWeeklyShifts').value)||5;
+  var weeklyOff = parseInt(document.getElementById('rWeeklyOff').value)||2;
+
+  // 计算实际每人班次
+  var actualShifts = {};
+  activeList.forEach(function(a){ actualShifts[a.name] = 0; });
+  if(data.schedule){
+    Object.values(data.schedule).forEach(function(row){
+      days.forEach(function(d){
+        var name = row[d];
+        if(name && actualShifts.hasOwnProperty(name)) actualShifts[name]++;
+      });
+    });
+  }
+
+  // 实际调休
+  var actualOff = {};
+  activeList.forEach(function(a){ actualOff[a.name] = 0; });
+  if(data.offDays){
+    days.forEach(function(d){
+      (data.offDays[d]||[]).forEach(function(name){
+        if(actualOff.hasOwnProperty(name)) actualOff[name]++;
+      });
+    });
+  }
+
+  // 计算各项分数
+  var shiftScore = 100, offScore = 100, unknownPenalty = 0;
+  var shiftIssues = [], offIssues = [], unknownNames = [];
+
+  activeList.forEach(function(a){
+    if(actualShifts[a.name] !== weeklyShifts){
+      shiftScore -= 20;
+      shiftIssues.push(a.name+'应'+weeklyShifts+'班实'+actualShifts[a.name]+'班');
+    }
+    if(actualOff[a.name] !== weeklyOff){
+      offScore -= 20;
+      offIssues.push(a.name+'应'+weeklyOff+'天实'+actualOff[a.name]+'天');
+    }
+  });
+  // 检查是否出现不在花名册的名字
+  if(data.schedule){
+    var knownNames = activeList.map(function(a){ return a.name; });
+    Object.values(data.schedule).forEach(function(row){
+      days.forEach(function(d){
+        var name = row[d];
+        if(name && !knownNames.includes(name) && !unknownNames.includes(name)){
+          unknownNames.push(name);
+          unknownPenalty += 30;
+        }
+      });
+    });
+  }
+
+  var violScore = data.violations&&data.violations.length ? Math.max(0,100-data.violations.length*25) : 100;
+  var totalScore = Math.max(0, Math.round((Math.min(100,shiftScore) + Math.min(100,offScore) + Math.min(100,violScore) - unknownPenalty) / 3));
+
+  var color = totalScore>=80?'var(--green)':totalScore>=60?'var(--gold)':'var(--red)';
+  var scoreItems = [
+    {label:'综合评分', val: totalScore+'分', color: color, tip: totalScore>=80?'优秀':'需要改进'},
+    {label:'班次合规', val: shiftScore<=0?'❌':'✅', color: shiftScore<=0?'var(--red)':'var(--green)', tip: shiftIssues.join(' | ')||'全部达标'},
+    {label:'调休落实', val: offScore<=0?'❌':'✅', color: offScore<=0?'var(--red)':'var(--green)', tip: offIssues.join(' | ')||'全部达标'},
+    {label:'陌生主播', val: unknownNames.length?'❌ '+unknownNames.join(','):'✅', color: unknownNames.length?'var(--red)':'var(--green)', tip: unknownNames.length?'出现了不在花名册的名字':'无'},
+    {label:'合规违规', val: (data.violations&&data.violations.length||0)+'项', color: (data.violations&&data.violations.length)?'var(--red)':'var(--green)', tip: (data.violations&&data.violations.join(' '))||'无违规'},
+  ];
+
+  el.innerHTML = scoreItems.map(function(s){
+    return '<div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;min-width:100px;flex:1">'
+      +'<div style="font-size:18px;font-weight:700;color:'+s.color+'">'+s.val+'</div>'
+      +'<div style="font-size:11px;color:var(--text3);margin-top:2px">'+s.label+'</div>'
+      +'<div style="font-size:10px;color:var(--text3);margin-top:3px;line-height:1.4">'+s.tip+'</div>'
+      +'</div>';
+  }).join('');
+
+  // 如果有问题，自动填充调试框
+  var autoIssues = [];
+  if(shiftIssues.length) autoIssues.push('班次数量错误：'+shiftIssues.join('、'));
+  if(offIssues.length) autoIssues.push('调休未落实：'+offIssues.join('、'));
+  if(unknownNames.length) autoIssues.push('出现了不在花名册的主播：'+unknownNames.join('、')+' ，请只排花名册内的人');
+  if(data.violations&&data.violations.length) autoIssues.push('违规：'+data.violations.join('；'));
+  if(autoIssues.length){
+    var fb = document.getElementById('debugFeedback');
+    if(fb && !fb.value) fb.value = autoIssues.join('\n');
+  }
+}
+
+async function autoFixSchedule(){
+  var feedback = document.getElementById('debugFeedback');
+  var fbText = feedback ? feedback.value.trim() : '';
+  if(!fbText){ alert('请先在调试框里描述问题'); return; }
+  if(!lastResult){ alert('暂无排班结果'); return; }
+
+  var key = getApiKey();
+  if(!key){ alert('请先配置API Key'); return; }
+
+  showLoading(true, '正在修正排班...', {estimatedMs:20000, title:'AI 自动修正中', icon:'🔧'});
+
+  var days = getWeekDates(weekOffset);
+  var activeList = anchors.filter(function(a){ return !a.disabled; });
+  var weeklyShifts = parseInt(document.getElementById('rWeeklyShifts').value)||5;
+  var weeklyOff = parseInt(document.getElementById('rWeeklyOff').value)||2;
+
+  var sp = '你是排班修正专家，只输出修正后的完整JSON，不加任何解释或代码块。';
+  var up = '当前排班（有问题）：' + JSON.stringify(lastResult.schedule)
+    + ' 调休：' + JSON.stringify(lastResult.offDays)
+    + ' 问题：' + fbText
+    + ' 花名册（只能用这些人）：' + activeList.map(function(a){return a.name;}).join('、')
+    + ' 规则：每人恰好'+weeklyShifts+'班+'+weeklyOff+'天调休；同日最多1班；E班后间隔≥12h；不能出现花名册外的人'
+    + ' 请修正所有问题输出完整JSON格式与原来相同';
+
+  try {
+    var text = await callLLM(sp, up, 1200);
+    showLoading(false);
+    var clean = text.trim().replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
+    var first = clean.indexOf('{'), last2 = clean.lastIndexOf('}');
+    if(first>=0&&last2>first) clean=clean.slice(first,last2+1);
+    var result = JSON.parse(clean);
+    lastResult = result;
+    renderResult(result, days);
+    // 保存这次修正经验
+    saveDebugMemory(fbText + ' → 已修正');
+    if(feedback) feedback.value = '';
+  } catch(err){
+    showLoading(false);
+    alert('修正失败：'+err.message);
+  }
+}
+
+function saveDebugMemory(customText){
+  var feedback = document.getElementById('debugFeedback');
+  var text = customText || (feedback ? feedback.value.trim() : '');
+  if(!text) return;
+  var memory = [];
+  try { memory = JSON.parse(localStorage.getItem('sch_memory')||'[]'); } catch(e){}
+  // 去重
+  if(!memory.includes(text)){
+    memory.push(text);
+    if(memory.length > 20) memory = memory.slice(-20); // 最多保留20条
+    localStorage.setItem('sch_memory', JSON.stringify(memory));
+  }
+  showToast('🧠 已记住：下次生成自动规避此问题');
+}
+
+function viewMemory(){
+  var memory = [];
+  try { memory = JSON.parse(localStorage.getItem('sch_memory')||'[]'); } catch(e){}
+  if(!memory.length){ alert('暂无学习记忆\n\n使用「记住此问题」按钮保存调试经验，AI下次生成会自动规避。'); return; }
+  var msg = '🧠 已记录的 '+memory.length+' 条学习记忆（下次生成自动带入）：\n\n'
+    + memory.map(function(m,i){ return (i+1)+'. '+m; }).join('\n');
+  var win = confirm(msg + '\n\n点「确定」清空所有记忆，点「取消」保留');
+  if(win){ localStorage.removeItem('sch_memory'); showToast('已清空学习记忆'); }
 }
 
 // ========== LOADING / PROGRESS ==========
@@ -2179,13 +2399,29 @@ function renderResult(data, days){
     </div>`;
   }
 
-  // Actions
-  html+=`<div class="action-bar" style="margin-top:24px">
-    <button class="btn btn-ghost" onclick="copyMarkdown()">📋 复制 Markdown 表格</button>
-    <button class="btn btn-ghost" onclick="generateNotice()">📢 生成主播通知</button>
+  // 评分区块
+  html+=`<div style="margin-top:24px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;margin-bottom:12px">
+    <div style="font-size:13px;font-weight:600;margin-bottom:12px;color:var(--text)">📊 排班质量评分 & 调试</div>
+    <div style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap" id="scoreCards"></div>
+    <div style="margin-bottom:10px">
+      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">💬 指出问题 / 调试反馈（AI将学习并自动修正）</label>
+      <textarea id="debugFeedback" style="width:100%;min-height:70px;font-size:13px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;font-family:inherit;resize:vertical" placeholder="例：乔莹这周只能排3班；赵颢棋周五必须休息；D班黄金档要换成更强的主播；调休分配不均匀..."></textarea>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="autoFixSchedule()">🔧 AI自动修正</button>
+      <button class="btn btn-ghost" onclick="saveDebugMemory()">💾 记住此问题（下次自动规避）</button>
+      <button class="btn btn-ghost" onclick="viewMemory()">🧠 查看学习记忆</button>
+    </div>
+  </div>`;
+  // 操作栏
+  html+=`<div class="action-bar">
+    <button class="btn btn-ghost" onclick="copyMarkdown()">📋 复制表格</button>
+    <button class="btn btn-ghost" onclick="generateNotice()">📢 生成通知</button>
     <button class="btn btn-ghost" onclick="checkCompliance()">✅ 合规检查</button>
     <button class="btn btn-primary" onclick="gotoPanel('generate')">🔄 重新生成</button>
   </div>`;
+  // 渲染评分
+  setTimeout(function(){ renderScoreCards(data); }, 100);
 
   container.innerHTML=html;
 }
@@ -2440,4 +2676,3 @@ refreshGeneratePage();
 </script>
 </body>
 </html>
- 
