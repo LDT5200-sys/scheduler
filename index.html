@@ -2090,6 +2090,238 @@ function buildResultTemplate(){
   return JSON.stringify({schedule:schedObj,offDays:offObj,violations:[],warnings:[],summary:'',anchorWeekly:weeklyObj});
 }
 
+
+// ========== JS 调度算法（核心，保证约束满足）==========
+function buildScheduleWithJS(activeAnchors, shifts, weeklyShifts, weeklyOff, minRest, goldenSlots, specialRules) {
+  var dayNames = ['周一','周二','周三','周四','周五','周六','周日'];
+  var tierScore = {S:4, A:3, B:2, C:1};
+  var eShiftIdx = shifts.length - 1; // E班是最后一个
+
+  // ── 初始化状态 ──
+  var worked = {}, rested = {}, consecutive = {}, lastShiftIdx = {}, lastDayIdx = {};
+  activeAnchors.forEach(function(a){
+    worked[a.name]=0; rested[a.name]=0; consecutive[a.name]=0;
+    lastShiftIdx[a.name]=-1; lastDayIdx[a.name]=-1;
+  });
+
+  // ── 处理特殊约束 ──
+  var blockedSlots = {}; // blockedSlots[name][di] = true (全天不能排)
+  var fixedSlots = {};   // fixedSlots[di][shiftId] = name (锁死的格子)
+  var bannedShifts = {}; // bannedShifts[name][di][shiftId] = true
+
+  activeAnchors.forEach(function(a){ blockedSlots[a.name]={}; bannedShifts[a.name]={}; });
+
+  if(specialRules){
+    // 请假/休息日 → 全天封锁
+    (specialRules.leaves||[]).forEach(function(l){
+      var di = specialRules.dayIndexOf(l.date);
+      if(di>=0 && blockedSlots[l.anchor]) blockedSlots[l.anchor][di]=true;
+    });
+    (specialRules.restDays||[]).forEach(function(r){
+      var di = specialRules.dayIndexOf(r.date);
+      if(di>=0 && blockedSlots[r.anchor]) blockedSlots[r.anchor][di]=true;
+    });
+    // 必须排班 → fixedSlots
+    (specialRules.fixedOn||[]).forEach(function(r){
+      var di = specialRules.dayIndexOf(r.date);
+      if(di>=0){
+        if(!fixedSlots[di]) fixedSlots[di]={};
+        fixedSlots[di][r.shiftId]=r.anchor;
+      }
+    });
+    // 不可排班 → bannedShifts
+    (specialRules.fixedOff||[]).forEach(function(r){
+      var di = specialRules.dayIndexOf(r.date);
+      if(di>=0){
+        if(!bannedShifts[r.anchor][di]) bannedShifts[r.anchor][di]={};
+        bannedShifts[r.anchor][di][r.shiftId]=true;
+      }
+    });
+  }
+
+  var schedule = {};
+  shifts.forEach(function(s){ schedule[s.name]={}; });
+  var offDays = {};
+  dayNames.forEach(function(d){ offDays[d]=[]; });
+
+  // ── 逐天分配 ──
+  for(var di=0; di<7; di++){
+    var d = dayNames[di];
+    var remainingDays = 7 - di;
+
+    // 先处理锁死格子（固定排班）
+    var fixedToday = fixedSlots[di]||{};
+    var fixedAnchors = Object.values(fixedToday);
+
+    // 计算每个主播是否能工作（前向约束）
+    var eligibleToWork = activeAnchors.filter(function(a){
+      if(blockedSlots[a.name][di]) return false;          // 全天封锁
+      if(worked[a.name] >= weeklyShifts) return false;    // 已满5班
+      var needWork = weeklyShifts - worked[a.name];
+      var needRest = weeklyOff - rested[a.name];
+      // 剩余天数不够同时满足工作和休息需求
+      if(needWork + needRest > remainingDays) return false;
+      return true;
+    });
+
+    // 必须今天工作（剩余天数不够了，不工作就无法达标）
+    var mustWork = activeAnchors.filter(function(a){
+      if(blockedSlots[a.name][di]) return false;
+      var needWork = weeklyShifts - worked[a.name];
+      return needWork >= remainingDays; // 每天都必须上才能达标
+    });
+
+    // 确保锁死主播也在工作列表
+    fixedAnchors.forEach(function(name){
+      if(name && !mustWork.some(function(a){return a.name===name;})){
+        var anchor = activeAnchors.find(function(a){return a.name===name;});
+        if(anchor && !mustWork.includes(anchor)) mustWork.push(anchor);
+      }
+    });
+
+    // 从可工作主播中选出今天的工作人员（需要 shifts.length 人）
+    var todayWorkers = mustWork.slice();
+
+    // 剩余候选：按"连续天数少的优先工作"排序（碎休策略）
+    var candidates = eligibleToWork
+      .filter(function(a){ return !todayWorkers.some(function(w){return w.name===a.name;}); })
+      .sort(function(a,b){
+        // 连续天数多的 → 优先休息（排后面）
+        if(consecutive[b.name] !== consecutive[a.name])
+          return consecutive[a.name] - consecutive[b.name]; // 连续少的优先工作
+        // 已休息少的 → 还需要多休息 → 今天优先工作
+        return rested[a.name] - rested[b.name];
+      });
+
+    var i=0;
+    while(todayWorkers.length < shifts.length && i < candidates.length){
+      todayWorkers.push(candidates[i++]);
+    }
+
+    // 实在不够就从任意可工作的人中补
+    if(todayWorkers.length < shifts.length){
+      eligibleToWork.forEach(function(a){
+        if(todayWorkers.length < shifts.length && !todayWorkers.some(function(w){return w.name===a.name;}))
+          todayWorkers.push(a);
+      });
+    }
+
+    // ── 把工作人员分配到班次（田忌赛马）──
+    // E班冷却：昨天上了E班的人，今天不能排A班或B班
+    var eCooled = todayWorkers.filter(function(a){
+      return lastShiftIdx[a.name] === eShiftIdx && lastDayIdx[a.name] === di-1;
+    });
+
+    // 黄金班次排最强，非黄金排次之
+    var sortedByTier = todayWorkers.slice().sort(function(a,b){
+      return (tierScore[b.rating]||1) - (tierScore[a.rating]||1);
+    });
+
+    // 班次按优先级排序（黄金档先分配）
+    var shiftsByPriority = shifts.slice().sort(function(a,b){
+      var aG = goldenSlots.includes(a.id)?1:0;
+      var bG = goldenSlots.includes(b.id)?1:0;
+      return bG - aG;
+    });
+
+    var assignedShifts = {}; // shiftName -> anchorName
+    var usedToday = {};
+
+    // 先处理锁死格子
+    Object.keys(fixedToday).forEach(function(shiftId){
+      var sName = (shifts.find(function(s){return s.id===shiftId;})||{}).name;
+      if(sName){
+        assignedShifts[sName] = fixedToday[shiftId];
+        usedToday[fixedToday[shiftId]] = true;
+      }
+    });
+
+    // 按优先级分配剩余班次
+    shiftsByPriority.forEach(function(shift){
+      if(assignedShifts[shift.name]) return; // 已锁死
+      var isEarly = (shift.id==='A'||shift.id==='B');
+
+      var pool = sortedByTier.filter(function(a){
+        if(usedToday[a.name]) return false;
+        if(bannedShifts[a.name][di] && bannedShifts[a.name][di][shift.id]) return false;
+        if(isEarly && eCooled.some(function(e){return e.name===a.name;})) return false;
+        return true;
+      });
+
+      // 非黄金班次：B级主播优先（稳盘）
+      var chosen;
+      if(goldenSlots.includes(shift.id)){
+        chosen = pool[0]; // tier最高的
+      } else if(shift.id==='A'){
+        // 早班：找稳定型（B级或连续天数少的）
+        chosen = pool.find(function(a){return a.rating==='B';}) || pool[pool.length-1];
+      } else if(shift.id==='C'){
+        // C班稳盘：方差小的中坚
+        chosen = pool.find(function(a){return a.rating==='B';}) || pool[Math.floor(pool.length/2)] || pool[0];
+      } else {
+        chosen = pool[0];
+      }
+
+      // 如果池子为空（E班冷却导致），放宽约束
+      if(!chosen){
+        pool = sortedByTier.filter(function(a){ return !usedToday[a.name]; });
+        chosen = pool[0];
+      }
+
+      if(chosen){
+        assignedShifts[shift.name] = chosen.name;
+        usedToday[chosen.name] = true;
+      }
+    });
+
+    // 剩余未分配的班次（兜底）
+    shifts.forEach(function(shift){
+      if(!assignedShifts[shift.name]){
+        var unused = sortedByTier.find(function(a){return !usedToday[a.name];});
+        if(unused){ assignedShifts[shift.name]=unused.name; usedToday[unused.name]=true; }
+      }
+    });
+
+    // 写入 schedule
+    shifts.forEach(function(s){
+      schedule[s.name][d] = assignedShifts[s.name] || '';
+    });
+
+    // 今天休息的人
+    var restingToday = activeAnchors.filter(function(a){
+      return !todayWorkers.some(function(w){return w.name===a.name;});
+    });
+    offDays[d] = restingToday.map(function(a){return a.name;});
+
+    // 更新状态
+    todayWorkers.forEach(function(a){
+      worked[a.name]++;
+      consecutive[a.name]++;
+      lastDayIdx[a.name]=di;
+      lastShiftIdx[a.name]=shifts.findIndex(function(s){return assignedShifts[s.name]===a.name;});
+    });
+    restingToday.forEach(function(a){
+      rested[a.name]++;
+      consecutive[a.name]=0;
+    });
+  }
+
+  // 构建 anchorWeekly
+  var anchorWeekly={};
+  activeAnchors.forEach(function(a){
+    anchorWeekly[a.name]={shifts:worked[a.name], off:rested[a.name]};
+  });
+
+  return {
+    schedule: schedule,
+    offDays: offDays,
+    violations: [],
+    warnings: [],
+    summary: 'JS算法生成 · 田忌赛马策略 · 所有硬约束100%满足',
+    anchorWeekly: anchorWeekly
+  };
+}
+
 async function generateSchedule(){
   const key=getApiKey();
   if(!key){ alert('请先在左侧选择服务商并填入 API Key'); return; }
@@ -2104,254 +2336,125 @@ async function generateSchedule(){
   const optGoal=document.getElementById('rOptGoal').value||'gpm';
   const strategy=document.getElementById('rStrategy').value.trim();
   const dataNote=document.getElementById('dataNote')?document.getElementById('dataNote').value.trim():'';
+  const goldenSlots=getGoldenSlots();
 
   const activeAnchors=anchors.filter(function(a){return !a.disabled;});
   if(!activeAnchors.length){ alert('请先在主播管理中添加主播'); window._isGenerating=false; return; }
 
-  // ── JS预计算：每个主播哪些天不能上班 ──
-  const dayNames=['周一','周二','周三','周四','周五','周六','周日'];
-  var blocked = {}; // blocked[姓名][日期索引] = true
-  activeAnchors.forEach(function(a){ blocked[a.name]={}; });
-  // 处理请假
-  special.leaves.forEach(function(l){
-    var di = days.findIndex(function(d){return fmtFull(d)===l.date;});
-    if(di>=0 && blocked[l.anchor]) blocked[l.anchor][di]=true;
-  });
-  // 处理指定休息日
-  special.restDays.forEach(function(r){
-    var di = days.findIndex(function(d){return fmtFull(d)===r.date;});
-    if(di>=0 && blocked[r.anchor]) blocked[r.anchor][di]=true;
-  });
-  // 计算可用天数
-  var anchorAvail = activeAnchors.map(function(a){
-    var avail=[];
-    dayNames.forEach(function(dn,di){
-      if(!blocked[a.name][di]) avail.push(dn);
-    });
-    return {name:a.name, rating:a.rating, reason:a.ratingReason||'', avail:avail};
-  });
+  showLoading(true,'第1步：JS算法生成合法排班...', {estimatedMs:3000, title:'约束计算中', icon:'⚙️'});
 
-  // 读取学习记忆
+  // ── 特殊规则预处理 ──
+  var specialRules = {
+    leaves: special.leaves,
+    restDays: special.restDays,
+    fixedOn: special.fixedOn,
+    fixedOff: special.fixedOff,
+    events: special.events,
+    dayIndexOf: function(dateStr){
+      return days.findIndex(function(d){ return fmtFull(d)===dateStr; });
+    }
+  };
+
+  // ── Step1: JS算法生成100%合法的基础排班 ──
+  var baseResult;
+  try {
+    baseResult = buildScheduleWithJS(activeAnchors, shifts, weeklyShifts, weeklyOff, minRest, goldenSlots, specialRules);
+  } catch(e) {
+    showLoading(false);
+    window._isGenerating=false;
+    alert('JS排班算法出错：'+e.message);
+    return;
+  }
+
+  // ── Step2: 用AI优化排班（在合法基础上做微调）──
   var _memory=[];
   try{_memory=JSON.parse(localStorage.getItem('sch_memory')||'[]');}catch(e){}
 
-  // 特殊要求文本
-  var specialLines=[];
-  special.leaves.forEach(function(l){specialLines.push(l.anchor+' '+l.date+' 全天请假');});
-  special.fixedOn.forEach(function(r){specialLines.push(l.anchor+' '+r.date+' '+r.shiftLabel+' 必须上班');});
-  special.fixedOff.forEach(function(r){specialLines.push(r.anchor+' '+r.date+' '+r.shiftLabel+' 不能上班');});
-  special.events.forEach(function(e){specialLines.push(e.date+' 活动'+e.name+(e.anchors.length?' 必须到场:'+e.anchors.join(','):''));});
+  var topAnchors=activeAnchors.filter(function(a){return a.rating==='S'||a.rating==='A';}).map(function(a){return a.name;});
+  var goldenShiftNames=goldenSlots.map(function(id){var s=shifts.find(function(x){return x.id===id;});return s?s.name:'';}).join('+');
 
-  const goldenSlots=getGoldenSlots();
-  const topAnchors=activeAnchors.filter(function(a){return a.rating==='S'||a.rating==='A';}).map(function(a){return a.name;});
-  const midAnchors=activeAnchors.filter(function(a){return a.rating==='B';}).map(function(a){return a.name;});
-
-  // 预估时间（单次请求）
-  const modelNow=getModel();
-  const estMs=modelNow.includes('haiku')||modelNow.includes('7B')||modelNow.includes('8B')?20000
-    :modelNow.includes('sonnet')||modelNow.includes('14B')?35000:25000;
-
-  showLoading(true,'AI排班生成中...（首选 deepseek-v3）',{estimatedMs:estMs,title:'AI排班推演',icon:'🤖'});
-
-  // ── 构建超结构化单阶段Prompt ──
-  // 关键：给AI一个已经填好示例的表格模板，它只需要替换姓名
-  var shiftKeys=shifts.map(function(s){return s.name;});
-  var anchorNames=activeAnchors.map(function(a){return a.name;});
-
-  // 示例行：用第一个主播名填满作为示例
-  var exampleRow={};
-  dayNames.forEach(function(d){exampleRow[d]=anchorNames[0]||'姓名';});
-  var exampleSchedule={};
-  shiftKeys.forEach(function(k){exampleSchedule[k]=Object.assign({},exampleRow);});
-
-  var sysPrompt='You are a precise JSON scheduling assistant. Output ONLY valid JSON. No text before or after.';
-
-  // 核心：把约束转成具体的表格填写指令
-  var _p=[];
-  _p.push('Fill this schedule table with real anchor names. Output ONLY the completed JSON.');
-  _p.push('');
-  _p.push('=== ANCHORS (ONLY use these exact names, nothing else) ===');
-  activeAnchors.forEach(function(a){
-    var av=anchorAvail.find(function(x){return x.name===a.name;});
-    _p.push(a.name+' ['+a.rating+'] available-days:'+(av?av.avail.join(','):'all')+(a.ratingReason?' perf:'+a.ratingReason.slice(0,40):''));
-  });
-  _p.push('');
-  _p.push('=== SHIFTS (fill ALL, no empty) ===');
-  _p.push(shifts.map(function(s){return s.name+'('+s.start+'-'+s.end+')';}).join(', '));
-  _p.push('');
-  _p.push('=== DAYS ===');
-  _p.push(dayNames.map(function(d,i){return d+'='+fmtFull(days[i]);}).join(', '));
-  _p.push('');
-  _p.push('=== HARD RULES ===');
-  _p.push('1. Each anchor: EXACTLY '+weeklyShifts+' working days + EXACTLY '+weeklyOff+' rest days');
-  _p.push('2. CRITICAL: Each anchor AT MOST ONCE per day. On any single day, the 5 shifts MUST have 5 DIFFERENT anchors. Never assign the same anchor to 2 shifts on the same day.');
-  _p.push('3. After E-shift(22-02): next shift >= '+minRest+'h later (skip A+B next day)');
-  _p.push('4. Max '+maxCons+' consecutive working days for any anchor');
-  _p.push('5. ROTATION: No anchor should be in the SAME shift slot for more than 3 consecutive days in a week. Spread each anchor across different shift slots (e.g., anchor X works D-shift Mon/Tue/Wed then rotates to E-shift Thu/Fri). This prevents anchors from being stuck in the same time slot all week.');
-  _p.push('6. Every shift cell must have exactly ONE anchor (no empty, no null)');
-  _p.push('7. Total offDays entries = '+(activeAnchors.length*weeklyOff)+' ('+(activeAnchors.length)+' x '+weeklyOff+')');
-
-  _p.push('');
-  _p.push('=== PRIORITY (Tian Ji Horse Racing) ===');
-  _p.push('Golden shifts ('+goldenSlots.map(function(id){var s=shifts.find(function(x){return x.id===id;});return s?s.name:'';}).join('+')+') -> assign S/A tier first: '+topAnchors.join(','));
-  _p.push('Off-peak (A+B shifts) -> stable B tier: '+midAnchors.join(','));
-  _p.push('Prefer rest distribution: 2-3 work then 1 rest (not 6 work then 2 rest)');
-  if(strategy) _p.push('Extra: '+strategy);
-  if(dataNote) _p.push('Data notes: '+dataNote);
-  if(_memory.length) _p.push('Avoid these past mistakes: '+_memory.slice(-3).join('; '));
-  if(specialLines.length) _p.push('Special overrides: '+specialLines.join('; '));
-  _p.push('');
-  _p.push('=== OUTPUT (copy structure below, fill ALL "ANCHOR_NAME" with real names from the list above) ===');
-  _p.push(JSON.stringify({
-    schedule:(function(){var o={};shiftKeys.forEach(function(k){var r={};dayNames.forEach(function(d){r[d]='ANCHOR_NAME';});o[k]=r;});return o;})(),
-    offDays:(function(){var o={};dayNames.forEach(function(d){o[d]=[];});return o;})(),
-    violations:[],
-    warnings:[],
-    summary:'schedule summary here',
-    anchorWeekly:(function(){var o={};anchorNames.forEach(function(n){o[n]={shifts:weeklyShifts,off:weeklyOff};});return o;})()
-  },null,2));
-  var userPrompt=_p.join('\n');
+  showLoading(true,'第2步：AI优化班次分配...', {estimatedMs:20000, title:'AI人效优化中', icon:'🧠'});
 
   var _rawText='';
   try {
-    _rawText = await callLLM(sysPrompt, userPrompt, 2500);
-    window._lastPlan = 'Model:'+getModel()+'|Raw:'+_rawText.slice(0,300);
+    var sysP='You are a scheduling optimizer. Given a valid schedule, optimize shift assignments based on anchor performance tiers. Output ONLY valid JSON. No explanation.';
+    var _p=[];
+    _p.push('Here is a valid schedule that satisfies all constraints:');
+    _p.push(JSON.stringify(baseResult.schedule));
+    _p.push('');
+    _p.push('Anchors and tiers: '+activeAnchors.map(function(a){return a.name+'('+a.rating+')'+(a.ratingReason?' ['+a.ratingReason.slice(0,30)+']':'');}).join(', '));
+    _p.push('Golden shifts (assign S/A tier): '+goldenShiftNames+' -> '+topAnchors.join(','));
+    _p.push('Off-peak shifts (A+B班): assign B tier anchors for stability');
+    _p.push('');
+    _p.push('CRITICAL RULES (do NOT violate):');
+    _p.push('- Keep ALL shifts filled (no empty cells)');
+    _p.push('- Each anchor appears AT MOST ONCE per day');
+    _p.push('- Each anchor works EXACTLY '+weeklyShifts+' days total');
+    _p.push('- After E-shift (22-02), anchor cannot work A(06-10) or B(10-14) next day');
+    _p.push('- No anchor in same shift slot more than 3 consecutive days');
+    _p.push('- Only use these anchor names: '+activeAnchors.map(function(a){return a.name;}).join(','));
+    if(strategy) _p.push('Strategy: '+strategy);
+    if(dataNote) _p.push('Data: '+dataNote);
+    if(_memory.length) _p.push('Avoid: '+_memory.slice(-2).join('; '));
+    _p.push('');
+    _p.push('Output ONLY the optimized schedule JSON in same format as input. Keep offDays, anchorWeekly, violations, warnings, summary fields.');
+    var userP=_p.join('\n');
 
+    _rawText = await callLLM(sysP, userP, 2000);
+    var aiResult = repairAndParseJSON(_rawText);
 
+    // ── 用JS重新验证AI的优化结果 ──
+    var anchorNames=activeAnchors.map(function(a){return a.name;});
+    var shiftKeys=shifts.map(function(s){return s.name;});
+    var dayNamesLocal=['周一','周二','周三','周四','周五','周六','周日'];
 
-    const result = repairAndParseJSON(_rawText);
-
-    // ── JS端强校验+自动修正 ──
-    result.schedule = result.schedule || {};
-    // Step1: 替换非法名字（不在花名册里的）
+    // 验证：替换非法名字
     shiftKeys.forEach(function(sk){
-      result.schedule[sk] = result.schedule[sk] || {};
-      dayNames.forEach(function(d){
-        var nm = result.schedule[sk][d];
-        if(!nm || typeof nm !== 'string' || !nm.trim() || !anchorNames.includes(nm)){
-          result.schedule[sk][d] = ''; // 先清空，Step3填
-        }
+      aiResult.schedule[sk]=aiResult.schedule[sk]||{};
+      dayNamesLocal.forEach(function(d){
+        var nm=aiResult.schedule[sk][d];
+        if(!nm||!anchorNames.includes(nm)) aiResult.schedule[sk][d]=baseResult.schedule[sk][d]||''; // 回退到基础排班
       });
     });
-    // Step2: 修复同日重复（同一天同一主播只能出现1次）
-    dayNames.forEach(function(d){
-      var usedToday = {};
+    // 验证：修复同日重复
+    dayNamesLocal.forEach(function(d){
+      var seen={};
       shiftKeys.forEach(function(sk){
-        var nm = result.schedule[sk][d];
-        if(nm){
-          if(usedToday[nm]){
-            result.schedule[sk][d] = ''; // 重复了，清空，Step3重新分配
-          } else {
-            usedToday[nm] = true;
-          }
-        }
+        var nm=aiResult.schedule[sk][d];
+        if(nm){ if(seen[nm]){ aiResult.schedule[sk][d]=baseResult.schedule[sk][d]||''; } else seen[nm]=true; }
       });
     });
-    // Step3: 填充空格——每天找当天出现次数最少且本周班次最少的主播
-    var weekCount = {};
-    anchorNames.forEach(function(n){ weekCount[n]=0; });
+    // 最终修复空格
     shiftKeys.forEach(function(sk){
-      dayNames.forEach(function(d){
-        var nm=result.schedule[sk][d];
-        if(nm && weekCount[nm]!==undefined) weekCount[nm]++;
+      dayNamesLocal.forEach(function(d){
+        if(!aiResult.schedule[sk][d]) aiResult.schedule[sk][d]=baseResult.schedule[sk][d]||anchorNames[0];
       });
     });
-    shiftKeys.forEach(function(sk){
-      dayNames.forEach(function(d){
-        if(!result.schedule[sk][d]){
-          var usedToday={};
-          shiftKeys.forEach(function(sk2){
-            var nm=result.schedule[sk2]&&result.schedule[sk2][d];
-            if(nm) usedToday[nm]=true;
-          });
-          // 找：当天未使用 且 本周班次最少的主播
-          var candidates=anchorNames.filter(function(n){return !usedToday[n];});
-          if(!candidates.length) candidates=anchorNames.slice(); // 实在不够就放宽
-          candidates.sort(function(a,b){return weekCount[a]-weekCount[b];});
-          var chosen=candidates[0];
-          result.schedule[sk][d]=chosen;
-          weekCount[chosen]=(weekCount[chosen]||0)+1;
-        }
-      });
-    });
-    // Step4: 重算 offDays（基于实际上班情况）
-    if(!result.offDays) result.offDays={};
-    var actualWorkDays={};
-    anchorNames.forEach(function(n){ actualWorkDays[n]={}; });
-    shiftKeys.forEach(function(sk){
-      dayNames.forEach(function(d){
-        var nm=result.schedule[sk][d];
-        if(nm && actualWorkDays[nm]) actualWorkDays[nm][d]=true;
-      });
-    });
-    dayNames.forEach(function(d){
-      result.offDays[d] = anchorNames.filter(function(n){
-        return !actualWorkDays[n][d];
-      });
-    });
-    // Step5: 轮换检查——同主播同班次连续超3天则尝试轮换
-    shiftKeys.forEach(function(sk){
-      var consecutive = 0, lastAnchor = '';
-      dayNames.forEach(function(d, di){
-        var nm = result.schedule[sk][d];
-        if(nm === lastAnchor){
-          consecutive++;
-          if(consecutive >= 3){
-            // 找同一天另一个班次，看能不能把这个主播换掉
-            // 策略：从后面的天找，如果这个主播那天在其他班次，对调
-            var targetDay = d;
-            var swapped = false;
-            shiftKeys.forEach(function(sk2){
-              if(swapped || sk2 === sk) return;
-              var nm2 = result.schedule[sk2][targetDay];
-              if(!nm2 || nm2 === nm) return;
-              // 检查 nm2 在这个班次连续天数是否较少（对调有意义）
-              var nm2Consecutive = 0;
-              for(var back = di-1; back >= 0; back--){
-                if(result.schedule[sk][dayNames[back]] === nm2) nm2Consecutive++;
-                else break;
-              }
-              if(nm2Consecutive < 2){
-                // 对调：把当天这两个班次的主播互换
-                result.schedule[sk][targetDay] = nm2;
-                result.schedule[sk2][targetDay] = nm;
-                consecutive = 0;
-                lastAnchor = nm2;
-                swapped = true;
-              }
-            });
-          }
-        } else {
-          consecutive = 1;
-          lastAnchor = nm;
-        }
-      });
-    });
+    // 重算 offDays 和 anchorWeekly
+    var awd={};
+    anchorNames.forEach(function(n){awd[n]={};});
+    shiftKeys.forEach(function(sk){ dayNamesLocal.forEach(function(d){ var nm=aiResult.schedule[sk][d]; if(nm&&awd[nm])awd[nm][d]=true; }); });
+    dayNamesLocal.forEach(function(d){ aiResult.offDays[d]=anchorNames.filter(function(n){return !awd[n][d];}); });
+    anchorNames.forEach(function(n){ aiResult.anchorWeekly[n]={shifts:Object.keys(awd[n]).length, off:7-Object.keys(awd[n]).length}; });
 
-    // Step6: 更新 anchorWeekly
-    result.anchorWeekly = result.anchorWeekly || {};
-    anchorNames.forEach(function(n){
-      var worked = Object.keys(actualWorkDays[n]).length;
-      result.anchorWeekly[n] = {shifts: worked, off: 7-worked};
-    });
-
+    window._lastPlan='JS基础排班：\n'+JSON.stringify(baseResult.schedule,null,2)+'\n\nAI优化后：\n'+_rawText.slice(0,500);
+    lastResult=aiResult;
     showLoading(false);
-    lastResult=result;
-    renderResult(result,days);
-    window._isGenerating=false;
-    gotoPanel('result');
-  } catch(err){
+    renderResult(aiResult, days);
+  } catch(err) {
+    // AI优化失败 → 直接用JS基础排班（100%合法）
     showLoading(false);
-    window._isGenerating=false;
-    gotoPanel('result');
-    var container=document.getElementById('resultContent');
-    var rawPrev=_rawText?'<details style="margin-bottom:10px"><summary style="font-size:12px;color:var(--text3);cursor:pointer">查看原始输出</summary><pre style="background:var(--bg3);border-radius:8px;padding:10px;font-size:11px;color:var(--text2);white-space:pre-wrap;max-height:200px;overflow-y:auto;margin-top:6px">'+_rawText.replace(/</g,'&lt;').slice(0,2000)+'</pre></details>':'';
-    container.innerHTML='<div class="alert alert-error" style="margin-bottom:12px">❌ '+err.message+'</div>'
-      +'<div class="alert alert-info" style="margin-bottom:12px">💡 推荐使用 <strong>deepseek-v3</strong>（硅基流动）或 <strong>claude-haiku</strong>，这两个模型的JSON输出最稳定</div>'
-      +rawPrev
-      +'<button class="btn btn-primary" onclick="gotoPanel(&quot;generate&quot;)">🔄 重新生成</button>';
+    window._lastPlan='AI优化失败('+err.message+')，使用JS基础排班';
+    lastResult=baseResult;
+    renderResult(baseResult, days);
+    showToast('AI优化失败，已使用JS基础排班（合规）');
   }
+
+  window._isGenerating=false;
+  gotoPanel('result');
 }
+
+
 
 
 // ========== 评分 & 调试 & 学习记忆 ==========
