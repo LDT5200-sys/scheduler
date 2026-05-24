@@ -48,9 +48,17 @@
     padding: 0;
     position: fixed; top: 0; left: 0; bottom: 0;
     z-index: 100;
+    overflow: hidden;
+  }
+  .sidebar-scroll {
+    flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
+    display: flex;
+    flex-direction: column;
   }
+  .sidebar-scroll::-webkit-scrollbar { width: 4px; }
+  .sidebar-scroll::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
   .main { margin-left: 220px; flex: 1; padding: 32px 40px; max-width: 1100px; }
 
   /* Sidebar */
@@ -66,7 +74,7 @@
   }
   .logo-sub { font-size: 11px; color: var(--text3); margin-top: 3px; }
 
-  .nav { padding: 12px 10px; }
+  .nav { padding: 12px 10px; flex: 1; }
   .nav-item {
     display: flex; align-items: center; gap: 10px;
     padding: 10px 12px; border-radius: var(--radius);
@@ -84,9 +92,14 @@
   .nav-icon { font-size: 16px; width: 20px; text-align: center; }
 
   .sidebar-footer {
-    padding: 14px 16px;
-    border-top: 1px solid var(--border);
+    padding: 10px 16px;
     font-size: 11px; color: var(--text3);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .sidebar-bottom {
+    flex-shrink: 0;
+    background: var(--bg2);
   }
 
   /* API Key section */
@@ -524,6 +537,7 @@
 <div class="app">
   <!-- Sidebar -->
   <aside class="sidebar">
+    <div class="sidebar-scroll">
     <div class="logo">
       <div class="logo-title">🎬 直播智能排班</div>
       <div class="logo-sub">抖音男装 · 人效最大化</div>
@@ -583,18 +597,20 @@
       </div>
     </nav>
 
-    <div class="sidebar-save-bar">
-      <button class="save-btn" onclick="saveAllSettings()" title="保存全部设置到本地">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-        保存设置
-      </button>
-      <button class="clear-btn" onclick="showClearModal()" title="分板块清除设置">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-        清除
-      </button>
+    </div><!-- end sidebar-scroll -->
+    <div class="sidebar-bottom">
+      <div class="sidebar-save-bar">
+        <button class="save-btn" onclick="saveAllSettings()" title="保存全部设置到本地">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+          保存设置
+        </button>
+        <button class="clear-btn" onclick="showClearModal()" title="分板块清除设置">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+          清除
+        </button>
+      </div>
+      <div class="sidebar-footer">v1.0 · 劳务合规版</div>
     </div>
-    <div id="saveToast" class="save-toast"></div>
-    <div class="sidebar-footer">v1.0 · 劳务合规版</div>
   </aside>
 
   <!-- Main -->
@@ -2045,14 +2061,24 @@ ${memoryStr}
 
   let _rawText = '';
   try {
-    _rawText = await callLLM(sysPrompt, userPrompt, 1000);
+    _rawText = await callLLM(sysPrompt, userPrompt, 2000);
     showLoading(false);
     let clean = _rawText.trim();
     clean = clean.replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
     const first = clean.indexOf('{');
     const last  = clean.lastIndexOf('}');
     if(first >= 0 && last > first) clean = clean.slice(first, last+1);
-    const result = JSON.parse(clean);
+    // 如果JSON被截断，尝试补全
+    if(first >= 0 && last <= first){
+      // 没有找到结尾大括号，说明被截断，补一个最小结构
+      throw new Error('AI输出被截断（token不够），请换更快的小模型或减少主播数量重试');
+    }
+    let result;
+    try { result = JSON.parse(clean); }
+    catch(parseErr){
+      // 尝试容错：把末尾截断的内容用最小有效JSON替代
+      throw new Error('JSON解析失败：' + parseErr.message + '。建议换 deepseek-v3 或 claude-haiku 重试');
+    }
     lastResult = result;
     renderResult(result, days);
     gotoPanel('result');
