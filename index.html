@@ -2129,6 +2129,8 @@ function buildScheduleWithJS(activeAnchors, shifts, weeklyShifts, weeklyOff, min
   var dayNames = ['周一','周二','周三','周四','周五','周六','周日'];
   var tierScore = {S:4, A:3, B:2, C:1};
   var eShiftIdx = shifts.length - 1; // E班是最后一个
+  var rotationLimit = (window._rotationLimit || 3); // 同班次最多连排天数
+  var restPattern = window._restPattern || 'spread'; // 调休分布策略
 
   // ── 初始化状态 ──
   var worked = {}, rested = {}, consecutive = {}, lastShiftIdx = {}, lastDayIdx = {};
@@ -2230,14 +2232,18 @@ function buildScheduleWithJS(activeAnchors, shifts, weeklyShifts, weeklyOff, min
     // 从可工作主播中选出今天的工作人员（需要 shifts.length 人）
     var todayWorkers = mustWork.slice();
 
-    // 剩余候选：按"连续天数少的优先工作"排序（碎休策略）
+    // 剩余候选：按碎休策略+轮换需求排序
     var candidates = eligibleToWork
       .filter(function(a){ return !todayWorkers.some(function(w){return w.name===a.name;}); })
       .sort(function(a,b){
-        // 连续天数多的 → 优先休息（排后面）
+        if(restPattern==='weekend'){
+          // 周末优先安排休息（di>=5），工作日优先工作
+          var aWant = di>=5 ? 1 : 0; // 周末更想休
+          var bWant = di>=5 ? 1 : 0;
+          if(aWant!==bWant) return bWant-aWant;
+        }
         if(consecutive[b.name] !== consecutive[a.name])
-          return consecutive[a.name] - consecutive[b.name]; // 连续少的优先工作
-        // 已休息少的 → 还需要多休息 → 今天优先工作
+          return consecutive[a.name] - consecutive[b.name];
         return rested[a.name] - rested[b.name];
       });
 
@@ -2294,6 +2300,28 @@ function buildScheduleWithJS(activeAnchors, shifts, weeklyShifts, weeklyOff, min
         if(bannedShifts[a.name][di] && bannedShifts[a.name][di][shift.id]) return false;
         if(isEarly && eCooled.some(function(e){return e.name===a.name;})) return false;
         return true;
+      });
+
+      // 轮换约束：如果某人在这个班次已连排 >= rotationLimit 天，降低优先级
+      pool.sort(function(a, b){
+        var aStreak=0, bStreak=0;
+        for(var back=di-1; back>=Math.max(0,di-rotationLimit); back--){
+          var dn=dayNames[back];
+          if(schedule[shift.name]&&schedule[shift.name][dn]===a.name) aStreak++;
+          else break;
+        }
+        for(var back2=di-1; back2>=Math.max(0,di-rotationLimit); back2--){
+          var dn2=dayNames[back2];
+          if(schedule[shift.name]&&schedule[shift.name][dn2]===b.name) bStreak++;
+          else break;
+        }
+        // 连排超限的排到池子后面
+        var aOver = aStreak>=rotationLimit?1:0;
+        var bOver = bStreak>=rotationLimit?1:0;
+        if(aOver!==bOver) return aOver-bOver;
+        // tier排序
+        var tierScore2={S:4,A:3,B:2,C:1};
+        return (tierScore2[b.rating]||1)-(tierScore2[a.rating]||1);
       });
 
       // 非黄金班次：B级主播优先（稳盘）
@@ -2603,6 +2631,68 @@ function renderScoreCards(data){
   }
 }
 
+
+// ========== 结构化调整函数（直接驱动JS算法重新生成）==========
+
+// 渲染智能问题检测
+function renderSmartIssues(data){
+  var el = document.getElementById('smartIssues');
+  if(!el || !data) return;
+  var issues = [];
+  var dayNames = ['周一','周二','周三','周四','周五','周六','周日'];
+  var shiftKeys = shifts.map(function(s){return s.name;});
+
+  // 检测：同主播同班次连续天数
+  shiftKeys.forEach(function(sk){
+    var streak=0, lastName='';
+    dayNames.forEach(function(d){
+      var nm = data.schedule[sk]&&data.schedule[sk][d];
+      if(nm && nm===lastName){ streak++; if(streak>=3) { var already=issues.find(function(x){return x.key===nm+'_'+sk;}); if(!already) issues.push({key:nm+'_'+sk, type:'rotation', text:nm+' 的 '+sk+' 已连排'+(streak+1)+'天', action:'applyRotationLimit(2)'}); } }
+      else{ streak=1; lastName=nm||''; }
+    });
+  });
+
+  // 检测：某主播本周全在同一班次
+  anchors.filter(function(a){return !a.disabled;}).forEach(function(a){
+    shiftKeys.forEach(function(sk){
+      var count=0, total=0;
+      dayNames.forEach(function(d){ var nm=data.schedule[sk]&&data.schedule[sk][d]; if(nm) total++; if(nm===a.name) count++; });
+      if(count>=5 && total>=5){
+        issues.push({key:a.name+'_all_'+sk, type:'rotation', text:a.name+' 本周全部集中在 '+sk, action:'applyRotationLimit(2)'});
+      }
+    });
+  });
+
+  if(!issues.length){
+    el.innerHTML='<div style="font-size:11px;color:var(--green);padding:4px 0">✅ 未检测到明显问题</div>';
+    return;
+  }
+  el.innerHTML='<div style="font-size:11px;color:var(--text3);margin-bottom:6px">🔍 检测到以下问题（点击一键修复）：</div>'
+    +issues.map(function(issue){
+      return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'
+        +'<span style="font-size:11px;color:var(--gold)">⚠️ '+issue.text+'</span>'
+        +'<button class="btn btn-ghost btn-sm" style="padding:3px 9px;font-size:11px" onclick="'+issue.action+'">一键修复</button>'
+        +'</div>';
+    }).join('');
+}
+
+// 连续班次限制（重新运行JS算法，带更严格的轮换约束）
+function applyRotationLimit(maxDays){
+  if(!lastResult){ showToast('请先生成排班'); return; }
+  window._rotationLimit = maxDays;
+  showToast('🔄 正在应用连排≤'+maxDays+'天约束，重新排班...');
+  setTimeout(function(){ generateSchedule(); }, 300);
+}
+
+// 调休分布方式
+function applyRestPattern(pattern){
+  if(!lastResult){ showToast('请先生成排班'); return; }
+  window._restPattern = pattern;
+  var labels = {spread:'分散休', weekend:'周末休', consecutive:'连休'};
+  showToast('🔄 调休方式切换为「'+labels[pattern]+'」，重新排班...');
+  setTimeout(function(){ generateSchedule(); }, 300);
+}
+
 var _isFixing = false;
 async function autoFixSchedule(){
   if(_isFixing){ showToast('⏳ 修正中，请勿重复点击'); return; }
@@ -2910,16 +3000,48 @@ function renderResult(data, days){
 
   // 评分区块
   html+=`<div style="margin-top:24px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;margin-bottom:12px">
-    <div style="font-size:13px;font-weight:600;margin-bottom:12px;color:var(--text)">📊 排班质量评分 & 调试</div>
-    <div style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap" id="scoreCards"></div>
-    <div style="margin-bottom:10px">
-      <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:5px">💬 指出问题 / 调试反馈（AI将学习并自动修正）</label>
-      <textarea id="debugFeedback" style="width:100%;min-height:70px;font-size:13px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;font-family:inherit;resize:vertical" placeholder="例：乔莹这周只能排3班；赵颢棋周五必须休息；D班黄金档要换成更强的主播；调休分配不均匀..."></textarea>
+    <div style="font-size:13px;font-weight:600;margin-bottom:14px;color:var(--text)">📊 排班质量评分</div>
+    <div style="display:flex;gap:12px;margin-bottom:18px;flex-wrap:wrap" id="scoreCards"></div>
+
+    <!-- 结构化调整区 -->
+    <div style="border-top:1px solid var(--border);padding-top:14px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px">⚙️ 一键结构化调整（直接驱动算法，立刻生效）</div>
+
+      <!-- 同班连续天数 -->
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+        <span style="font-size:12px;color:var(--text2);min-width:160px">📅 同一主播同一班次最多连排</span>
+        <div style="display:flex;gap:6px">
+          ${[1,2,3,4].map(function(v){
+            return '<button class="btn btn-ghost btn-sm" style="padding:4px 10px;font-size:12px" onclick="applyRotationLimit('+v+')">≤'+v+'天</button>';
+          }).join('')}
+        </div>
+        <span style="font-size:11px;color:var(--text3)">← 数值越小越分散</span>
+      </div>
+
+      <!-- 调休分布 -->
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+        <span style="font-size:12px;color:var(--text2);min-width:160px">😴 调休分布方式</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost btn-sm" style="padding:4px 10px;font-size:12px" onclick="applyRestPattern('spread')">分散休（推荐）</button>
+          <button class="btn btn-ghost btn-sm" style="padding:4px 10px;font-size:12px" onclick="applyRestPattern('weekend')">尽量周末</button>
+          <button class="btn btn-ghost btn-sm" style="padding:4px 10px;font-size:12px" onclick="applyRestPattern('consecutive')">连休两天</button>
+        </div>
+      </div>
+
+      <!-- 智能问题检测 -->
+      <div id="smartIssues" style="margin-top:8px"></div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn btn-primary" onclick="autoFixSchedule()">🔧 AI自动修正</button>
-      <button class="btn btn-ghost" onclick="saveDebugMemory()">💾 记住此问题（下次自动规避）</button>
-      <button class="btn btn-ghost" onclick="viewMemory()">🧠 查看学习记忆</button>
+
+    <!-- 自然语言区（AI辅助，不保证100%） -->
+    <div style="border-top:1px solid var(--border);padding-top:14px">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:6px">💬 自然语言反馈（AI辅助，适合复杂偏好）</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:8px">⚠️ AI理解自然语言不保证100%准确，建议优先用上方结构化调整</div>
+      <textarea id="debugFeedback" style="width:100%;min-height:60px;font-size:13px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;font-family:inherit;resize:vertical" placeholder="例：赵颢棋这周D班排太多了，帮我分散一下；或者想让某人优先排某班..."></textarea>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button class="btn btn-primary btn-sm" onclick="autoFixSchedule()">🔧 AI修正</button>
+        <button class="btn btn-ghost btn-sm" onclick="saveDebugMemory()">💾 记住问题</button>
+        <button class="btn btn-ghost btn-sm" onclick="viewMemory()">🧠 查看记忆</button>
+      </div>
     </div>
   </div>`;
   // 操作栏
@@ -2930,7 +3052,10 @@ function renderResult(data, days){
     <button class="btn btn-primary" onclick="gotoPanel('generate')">🔄 重新生成</button>
   </div>`;
   // 渲染评分
-  setTimeout(function(){ renderScoreCards(data); }, 100);
+  setTimeout(function(){
+    renderScoreCards(data);
+    renderSmartIssues(data);
+  }, 100);
 
   container.innerHTML=html;
 }
