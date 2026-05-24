@@ -2019,8 +2019,9 @@ async function generateSchedule(){
   window._isGenerating = true;
   // 根据主播数 & 班次数预估时间：Haiku约15s，Sonnet约30s，其他约20s
   const modelNow = getModel();
-  const estMs = modelNow.includes('haiku')||modelNow.includes('7B')||modelNow.includes('8B') ? 15000
-              : modelNow.includes('sonnet')||modelNow.includes('14B') ? 28000 : 22000;
+  // 两阶段推理，时间翻倍
+  const estMs = modelNow.includes('haiku')||modelNow.includes('7B')||modelNow.includes('8B') ? 30000
+              : modelNow.includes('sonnet')||modelNow.includes('14B') ? 55000 : 40000;
   showLoading(true, '正在构建请求...', {estimatedMs: estMs, title:'AI 智能排班推演中', icon:'🤖'});
 
   const activeAnchors=anchors.filter(a=>!a.disabled);
@@ -2041,67 +2042,83 @@ async function generateSchedule(){
   try { _memory = JSON.parse(localStorage.getItem('sch_memory')||'[]'); } catch(e){}
   var memoryStr = _memory.length ? '\n\n历史调试经验（必须吸取教训）：\n'+_memory.slice(-5).map(function(m,i){ return (i+1)+'. '+m; }).join('\n') : '';
 
-  const sysPrompt=`You are a scheduling system. Output only valid JSON. No explanation, no markdown, no code blocks. Strictly follow all numeric constraints.`;
-
-  const anchorNames = activeAnchors.map(function(a){ return a.name; }).join('、');
+  // ── 构建上下文 ──
   const goldenSlots = getGoldenSlots();
-  const goldenShiftNames = goldenSlots.map(function(id){ var s=shifts.find(function(x){return x.id===id;}); return s?s.name+s.start+'-'+s.end:id; }).join('、');
-  const topAnchors = activeAnchors.filter(function(a){return a.rating==='S'||a.rating==='A';}).map(function(a){return a.name;}).join('、')||'无';
-  const totalShiftsPerDay = shifts.length;
-  
-  // 逐天验证字符串：每天几个班，需要几个主播
-  const perDayCheck = '每天共'+totalShiftsPerDay+'个班次（'+shiftsList+'），每班1人，每天需要'+totalShiftsPerDay+'个不同的主播值班';
-  
-  const userPrompt = '【排班人员】共'+activeAnchors.length+'人：'+anchorsList+' 禁止出现名单外任何人名。 '
-   +'【班次】'+shiftsList+' '
-   +'【日期】'+datesInfo+' '
-   +'【第一优先级-每天排满】每天共'+shifts.length+'个班次每班1人，每天需'+shifts.length+'个不同主播值班，每个班次必须有人不得空缺。 '
-   +'【第二优先级-个人工时】每人每周值班'+weeklyShifts+'天调休'+weeklyOff+'天；同日同人只出现1次；E班次日不排A/B班；连续上班≤'+maxCons+'天；调休总格数='+activeAnchors.length*weeklyOff+'格需分配到offDays中。 '
-   +'【第三优先级-人效优化(前两项满足后才考虑)】重点时段'+goldenShiftNames+'优先排'+topAnchors+'；优化目标'+(optGoal==='gpm'?'GPM最大':'ROI最大')+'。 '
-   +(strategy?'运营建议：'+strategy+' ':'')
-   +(dataNote?'数据参考：'+dataNote+' ':'')
-   +'【特殊要求-最高优先级】'+(specialStr||'无')+' '
-   +(memoryStr?'【历史教训必须规避】'+memoryStr+' ':'')
-   +'【输出】只输出JSON不要任何解释：'
-   + buildResultTemplate();
+  const goldenShiftNames = goldenSlots.map(function(id){
+    var s=shifts.find(function(x){return x.id===id;});
+    return s ? s.name+'('+s.start+'-'+s.end+')' : id;
+  }).join('、');
+  const topAnchors = activeAnchors.filter(function(a){return a.rating==='S'||a.rating==='A';}).map(function(a){return a.name+'('+a.rating+'级)';}).join('、') || '无';
+  const midAnchors = activeAnchors.filter(function(a){return a.rating==='B';}).map(function(a){return a.name;}).join('、') || '无';
+  const juniorAnchors = activeAnchors.filter(function(a){return a.rating==='C';}).map(function(a){return a.name;}).join('、') || '无';
 
-
-
+  // ── Phase 1: 让 AI 先做推理规划，不要求输出JSON ──
+  const phase1Sys = 'You are an expert broadcast scheduling strategist. Think step by step. Be precise with numbers.';
+  const NL='\n';
+  const phase1User = '## 排班任务'+NL+'主播名单（共'+activeAnchors.length+'人，只能用这些人）：'+NL+activeAnchors.map(function(a){return '- '+a.name+'（'+a.rating+'级）'+(a.ratingReason?' 数据：'+a.ratingReason.slice(0,50):'');}).join(NL)+NL+NL+'班次（每天必须全部排满）：'+shiftsList+NL+'本周日期：'+datesInfo+NL+NL+'## 硬性红线'+NL+'1. 每人每周上班'+weeklyShifts+'天+调休'+weeklyOff+'天=共7天'+NL+'2. 同一主播同天只能出现1次'+NL+'3. E班(22:00-02:00)后至少休息'+minRest+'小时，次日最早排C班(14:00)'+NL+'4. 最多连续上班'+maxCons+'天'+NL+'5. 每天所有'+shifts.length+'个班次都必须有人，绝不空播'+NL+NL+'## 排班哲学（按优先级执行）'+NL+'P0 防灾-先满足红线：任何违规直接作废'+NL+'P1 不空播：每天'+shifts.length+'个班次全满，这是底线'+NL+'P2 工时达标：每人恰好'+weeklyShifts+'班+'+weeklyOff+'调休，调休总计='+activeAnchors.length*weeklyOff+'格'+NL+'P3 田忌赛马-好钢用刀刃，不搞平均：'+NL+'  黄金时段('+goldenShiftNames+')=销冠专属，优先排高评级：'+topAnchors+NL+'  流量波谷(早A/午B)=稳盘，排稳定型中坚：'+midAnchors+NL+'  绝不让销冠浪费在冷档'+NL+'P4 碎休优于集中休，上2-3天休1天 > 上6天休2天'+NL+'P5 同班次尽量固定同一主播，减少换人造成的流量波动'+NL+NL+(strategy?'## 运营特别指示'+NL+strategy+NL+NL:'')+(dataNote?'## 历史数据参考'+NL+dataNote+NL+NL:'')+(window._dataSummary?'## 绩效数据摘要'+NL+window._dataSummary+NL+NL:'')+(specialStr?'## 特殊要求（最高优先级）'+NL+specialStr+NL+NL:'')+(memoryStr?'## 历史教训（必须规避）'+NL+memoryStr+NL+NL:'')+'## 任务'+NL+'请按优先级逐步推演本周最优排班。'+NL+'先写推理过程（每人分配哪天哪班及原因），'+NL+'最后写 [SCHEDULE_START] 然后输出JSON，写 [SCHEDULE_END] 结束。'+NL+'JSON格式：'+buildResultTemplate();
+  showLoading(true, '第1步：AI推演排班逻辑...', {estimatedMs: estMs*0.6, title:'AI策略推演中', icon:'🧠'});
   let _rawText = '';
+  let _phase1Text = '';
   try {
-    _rawText = await callLLM(sysPrompt, userPrompt, 2000);
+    _phase1Text = await callLLM(phase1Sys, phase1User, 3000);
+
+    // 从 Phase1 输出里提取 JSON
+    let clean = '';
+    const startMark = _phase1Text.indexOf('[SCHEDULE_START]');
+    const endMark = _phase1Text.indexOf('[SCHEDULE_END]');
+    if(startMark >= 0){
+      const jsonPart = endMark > startMark
+        ? _phase1Text.slice(startMark+16, endMark)
+        : _phase1Text.slice(startMark+16);
+      clean = jsonPart.trim().replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
+    }
+
+    // 如果没找到标记，退回到全文提取JSON
+    if(!clean){
+      clean = _phase1Text.trim().replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
+    }
+    const fi = clean.indexOf('{'), la = clean.lastIndexOf('}');
+    if(fi>=0 && la>fi) clean = clean.slice(fi, la+1);
+
+    // 如果 Phase1 输出里没有完整 JSON，做 Phase2 补一次
+    let result = null;
+    try {
+      result = JSON.parse(clean);
+    } catch(e) {
+      showLoading(true, '第2步：整理输出结果...', {estimatedMs: estMs*0.4, title:'格式化排班表', icon:'📋'});
+      const phase2Sys = 'You are a JSON formatter. Output only valid JSON. No explanation.';
+      const phase2User = 'Based on this scheduling plan: '+_phase1Text.slice(0,2000)+' Output ONLY JSON in this format: '+buildResultTemplate();
+      _rawText = await callLLM(phase2Sys, phase2User, 2000);
+      let c2 = _rawText.trim().replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
+      const f2=c2.indexOf('{'), l2=c2.lastIndexOf('}');
+      if(f2>=0&&l2>f2) c2=c2.slice(f2,l2+1);
+      result = JSON.parse(c2);
+    }
+
+    // 把推理过程存起来供展示
+    window._lastPlan = _phase1Text;
+
+
     showLoading(false);
-    let clean = _rawText.trim();
-    clean = clean.replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
-    const first = clean.indexOf('{');
-    const last  = clean.lastIndexOf('}');
-    if(first >= 0 && last > first) clean = clean.slice(first, last+1);
-    // 如果JSON被截断，尝试补全
-    if(first >= 0 && last <= first){
-      // 没有找到结尾大括号，说明被截断，补一个最小结构
-      throw new Error('AI输出被截断（token不够），请换更快的小模型或减少主播数量重试');
-    }
-    let result;
-    try { result = JSON.parse(clean); }
-    catch(parseErr){
-      // 尝试容错：把末尾截断的内容用最小有效JSON替代
-      throw new Error('JSON解析失败：' + parseErr.message + '。建议换 deepseek-v3 或 claude-haiku 重试');
-    }
     lastResult = result;
     renderResult(result, days);
     window._isGenerating = false;
+    // 展示推理过程
+    if(window._lastPlan){
+      var planDiv = document.getElementById('schedulePlanText');
+      if(planDiv) planDiv.textContent = window._lastPlan;
+    }
     gotoPanel('result');
   } catch(err){
     showLoading(false);
+    window._isGenerating = false;
     gotoPanel('result');
     const container = document.getElementById('resultContent');
-    const rawPreview = _rawText ? '<div style="margin-bottom:12px"><div style="font-size:12px;color:var(--text3);margin-bottom:6px">AI 原始返回（供排查）：</div><pre style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:11px;color:var(--text2);white-space:pre-wrap;word-break:break-all;max-height:280px;overflow-y:auto">'+_rawText.replace(/</g,'&lt;').slice(0,2000)+'</pre></div>' : '';
+    const rawPreview = (_phase1Text||_rawText) ? '<div style="margin-bottom:12px"><div style="font-size:12px;color:var(--text3);margin-bottom:6px">AI 原始推理过程（供排查）：</div><pre style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:11px;color:var(--text2);white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto">'+(_phase1Text||_rawText).replace(/</g,'&lt;').slice(0,1500)+'</pre></div>' : '';
     container.innerHTML = '<div class="alert alert-error" style="margin-bottom:12px">❌ 排班生成失败：'+err.message+'</div>'
-      + '<div class="alert alert-warn" style="margin-bottom:12px">请检查：①API Key正确 ②服务商匹配 ③账户余额充足<br>当前模型：<strong>'+getModel()+'</strong>，若报400/模型不存在，请在左侧切换到其他模型</div>'
+      + '<div class="alert alert-warn" style="margin-bottom:12px">请检查：①API Key正确 ②服务商匹配 ③账户余额充足<br>当前模型：<strong>'+getModel()+'</strong>，若报400请切换模型</div>'
       + rawPreview
       + '<button class="btn btn-primary" onclick="gotoPanel(&quot;generate&quot;)">🔄 重新生成</button>';
-  } finally {
-    window._isGenerating = false;
   }
 }
 
@@ -2408,6 +2425,11 @@ function renderResult(data, days){
   if(data.summary){
     html+=`<div class="summary-box">💡 ${data.summary}</div>`;
   }
+  // AI推理过程（可折叠）
+  html+=`<details style="margin-bottom:14px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px">
+    <summary style="cursor:pointer;font-size:12px;color:var(--text2);font-weight:500;user-select:none">🧠 查看AI推理过程（田忌赛马决策逻辑）</summary>
+    <pre id="schedulePlanText" style="margin-top:10px;font-size:11px;color:var(--text2);white-space:pre-wrap;word-break:break-all;max-height:300px;overflow-y:auto;line-height:1.6">${window._lastPlan?window._lastPlan.replace(/</g,'&lt;').slice(0,3000):'暂无推理记录'}</pre>
+  </details>`;
 
   // Table
   html+=`<div class="schedule-wrap"><table class="schedule-table"><thead><tr>
