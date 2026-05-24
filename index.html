@@ -1218,8 +1218,32 @@ async function callLLM(systemPrompt, userPrompt, maxTokens=2000){
     const data = await resp.json();
     if(data.error) throw new Error(data.error.message||JSON.stringify(data.error));
     const choice = data.choices&&data.choices[0];
-    if(!choice) throw new Error('返回数据异常：'+JSON.stringify(data));
-    return choice.message?.content || choice.delta?.content || '';
+    if(!choice) throw new Error('返回数据异常：'+JSON.stringify(data).slice(0,200));
+
+    // 兼容多种响应格式：
+    // 普通: message.content = "string"
+    // 思考模型(gemini-2.5-pro/o1): message.content = [{type:"thinking",...},{type:"text",text:"..."}]
+    // 流式: delta.content
+    var rawContent = (choice.message && choice.message.content !== undefined)
+      ? choice.message.content
+      : (choice.delta ? choice.delta.content : null);
+
+    if(typeof rawContent === 'string') return rawContent;
+
+    if(Array.isArray(rawContent)){
+      // 过滤掉 thinking/reasoning block，只取 text
+      var texts = rawContent
+        .filter(function(b){ return b && (b.type==='text' || typeof b.text==='string'); })
+        .map(function(b){ return b.text || ''; });
+      if(texts.length) return texts.join('');
+      // 如果只有 thinking block，也返回它（至少有内容）
+      return rawContent.map(function(b){ return b.text||b.content||''; }).join('');
+    }
+
+    // 部分模型把内容放在 message.text 而非 content
+    if(choice.message && choice.message.text) return choice.message.text;
+
+    throw new Error('模型返回格式未知，建议换 deepseek-v3 或 claude-haiku（当前：'+model+'）');
   }
 }
 
