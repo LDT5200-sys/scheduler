@@ -1490,7 +1490,7 @@ async function runRating(){
       const sp='你是直播数据分析师。只输出JSON，不要任何解释和代码块标记。';
       const up=`主播绩效摘要：\n${summaryLines}\n\n用户自定义评判规则：${ruleText}\n\n花名册：${anchors.map(a=>a.name).join('、')}\n\n按用户规则结合数据，评定S/A/B/C级，不在摘要中的主播评B。\n只输出JSON：{"ratings":{"姓名":{"rating":"S","reason":"说明"}}}`;
       const rt=await callLLM(sp,up,800);
-      const parsed=JSON.parse(rt.replace(/```json[\s\S]*?```|```/g,'').trim());
+      const parsed = repairAndParseJSON(rt);
       aiRatings=parsed.ratings;
     } catch(e){ /* 失败则降级到本地得分 */ }
   }
@@ -1983,6 +1983,70 @@ function refreshGeneratePage(){
 
 // ========== GENERATE ==========
 
+
+// ========== JSON 修复工具 ==========
+function repairAndParseJSON(raw) {
+  if(!raw || !raw.trim()) throw new Error('AI返回内容为空');
+
+  // Step1: 提取 { ... } 之间的内容
+  var s = raw.trim();
+  s = s.replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
+  var first = s.indexOf('{');
+  var last  = s.lastIndexOf('}');
+  if(first < 0) throw new Error('返回内容中找不到JSON（无大括号）');
+  s = s.slice(first, last >= 0 ? last+1 : s.length);
+
+  // Step2: 先直接解析，成功就返回
+  try { return JSON.parse(s); } catch(e) {}
+
+  // Step3: 自动修复常见问题
+  var fixed = s
+    // 中文冒号/逗号/引号替换
+    .replace(/：/g, ':').replace(/，/g, ',').replace(/"/g, '"').replace(/"/g, '"')
+    // 去掉 // 注释（不在字符串里的）
+    .replace(/\/\/[^\n]*/g, '')
+    // 去掉尾随逗号 (,} 或 ,])
+    .replace(/,\s*([}\]])/g, '$1')
+    // 去掉 undefined
+    .replace(/:\s*undefined/g, ':null')
+    // 修复没有引号的 key: value 里裸 value
+    .replace(/:\s*([\u4e00-\u9fa5][^,\n}\]"]*?)([,\n}\]])/g, function(m,v,e){
+      return ': "'+v.trim()+'"'+e;
+    });
+
+  try { return JSON.parse(fixed); } catch(e2) {}
+
+  // Step4: 截断修复 —— 找到最后一个完整的键值对后截断并补全括号
+  // 统计未闭合的 { 和 [ 
+  var depth = [], repaired = '';
+  var inStr = false, escape = false;
+  for(var i=0; i<fixed.length; i++){
+    var c = fixed[i];
+    if(escape){ repaired+=c; escape=false; continue; }
+    if(c==='\\'){ repaired+=c; escape=true; continue; }
+    if(c==='"' && !escape){ inStr=!inStr; repaired+=c; continue; }
+    if(!inStr){
+      if(c==='{' || c==='[') depth.push(c);
+      else if(c==='}') { if(depth.length && depth[depth.length-1]==='{') depth.pop(); }
+      else if(c===']') { if(depth.length && depth[depth.length-1]==='[') depth.pop(); }
+    }
+    repaired += c;
+  }
+  if(inStr) repaired += '"';  // 补上未闭合的字符串
+  // 去掉末尾的逗号
+  repaired = repaired.replace(/,\s*$/, '');
+  // 补上未闭合的括号
+  for(var j=depth.length-1; j>=0; j--){
+    repaired += depth[j]==='{' ? '}' : ']';
+  }
+  // 再次去掉尾随逗号
+  repaired = repaired.replace(/,\s*([}\]])/g, '$1');
+
+  try { return JSON.parse(repaired); } catch(e3) {
+    throw new Error('JSON修复失败（'+e3.message.slice(0,60)+'），请重试或换模型');
+  }
+}
+
 function buildResultTemplate(){
   var activeList = anchors.filter(function(a){ return !a.disabled; });
   var shiftKeys = shifts.map(function(s){ return s.name; });
@@ -2092,21 +2156,36 @@ async function generateSchedule(){
 
     // Phase2：把推理结果 + 格式要求传入，专门生成 JSON
     showLoading(true, '第2步：生成排班表（约'+Math.round(estMs*0.45/1000)+'秒）...', {estimatedMs: estMs*0.45, title:'📋 生成排班表', icon:'📋'});
-    const phase2User = '根据以下排班推理方案，输出对应的JSON。只输出JSON本身，不要任何解释：'+NL
-      +'推理方案：'+_phase1Text.slice(0,1800)+NL+NL
-      +'花名册（只能用这些名字，禁止其他名字）：'+activeAnchors.map(function(a){return a.name;}).join('、')+NL
-      +'每人每周上班'+weeklyShifts+'天，调休'+weeklyOff+'天，调休总格='+activeAnchors.length*weeklyOff+'格'+NL
-      +'JSON格式：'+buildResultTemplate();
+    // 简化的 Phase2 prompt，减少模型生成出错概率
+    var shiftNameList = shifts.map(function(s){return s.name;}).join(',');
+    var anchorNameList = activeAnchors.map(function(a){return a.name;}).join(',');
+    var dayList = '周一,周二,周三,周四,周五,周六,周日';
+    var phase2User = '根据排班方案转换为JSON。只输出JSON，不要任何其他文字。'+NL
+      +'排班方案：'+_phase1Text.slice(0,1500)+NL+NL
+      +'要求：'+NL
+      +'- 只能使用这些主播名字：'+anchorNameList+NL
+      +'- 每人每周值班'+weeklyShifts+'天，调休'+weeklyOff+'天'+NL
+      +'- schedule的key为班次名（'+shiftNameList+'），value为{周一:姓名,...,周日:姓名}'+NL
+      +'- offDays的key为星期（'+dayList+'），value为当天调休主播数组'+NL
+      +'- anchorWeekly记录每人实际shifts和off数量'+NL+NL
+      +'输出格式示例（直接替换姓名，不要留空字符串）：'+NL
+      +'{'+NL
+      +'  "schedule":{'+NL
+      +shiftNameList.split(',').map(function(sn){
+        return '    "'+sn+'":{'+dayList.split(',').map(function(d){return '"'+d+'":"主播姓名"';}).join(',')+'}';
+      }).join(','+NL)+NL
+      +'  },'+NL
+      +'  "offDays":{"周一":["姓名"],"周二":[],"周三":[],"周四":[],"周五":[],"周六":[],"周日":[]},'+NL
+      +'  "violations":[],'+NL
+      +'  "warnings":[],'+NL
+      +'  "summary":"一句话说明排班逻辑",'+NL
+      +'  "anchorWeekly":{'+anchorNameList.split(',').map(function(n){return '"'+n+'":{"shifts":5,"off":2}';}).join(',')+'}'+NL
+      +'}';
 
     _rawText = await callLLM(phase2Sys, phase2User, 2000);
 
     // 解析 JSON
-    let clean = _rawText.trim().replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
-    const fi = clean.indexOf('{'), la = clean.lastIndexOf('}');
-    if(fi>=0 && la>fi) clean = clean.slice(fi, la+1);
-    if(fi<0 || la<=fi) throw new Error('模型未返回有效JSON，请换模型重试（当前：'+getModel()+'）');
-
-    const result = JSON.parse(clean);
+    const result = repairAndParseJSON(_rawText);
     window._lastPlan = _phase1Text; // 保留推理过程
 
     showLoading(false);
@@ -2268,11 +2347,7 @@ async function autoFixSchedule(){
     }
     showLoading(false);
     _isFixing = false;
-    var clean = text.trim().replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
-    var fi = clean.indexOf('{'), la = clean.lastIndexOf('}');
-    if(fi>=0&&la>fi) clean=clean.slice(fi,la+1);
-    if(fi<0||la<=fi) throw new Error('模型未返回有效JSON，请换模型后重试');
-    var result = JSON.parse(clean);
+    var result = repairAndParseJSON(text);
     lastResult = result;
     renderResult(result, days);
     saveDebugMemory(fbText + ' 已修正');
