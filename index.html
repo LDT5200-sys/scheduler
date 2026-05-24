@@ -2003,6 +2003,8 @@ async function generateSchedule(){
   const dataNote=document.getElementById('dataNote')?document.getElementById('dataNote').value.trim():'';
   const uploadedStats=window._dataSummary||'';
 
+  if(window._isGenerating){ showToast('⏳ 生成中，请勿重复点击'); return; }
+  window._isGenerating = true;
   // 根据主播数 & 班次数预估时间：Haiku约15s，Sonnet约30s，其他约20s
   const modelNow = getModel();
   const estMs = modelNow.includes('haiku')||modelNow.includes('7B')||modelNow.includes('8B') ? 15000
@@ -2027,7 +2029,7 @@ async function generateSchedule(){
   try { _memory = JSON.parse(localStorage.getItem('sch_memory')||'[]'); } catch(e){}
   var memoryStr = _memory.length ? '\n\n历史调试经验（必须吸取教训）：\n'+_memory.slice(-5).map(function(m,i){ return (i+1)+'. '+m; }).join('\n') : '';
 
-  const sysPrompt=`你是专业的直播间排班AI，必须100%严格遵守所有数字约束。只输出合法JSON，不加任何解释或代码块标记。`;
+  const sysPrompt=`You are a scheduling system. Output only valid JSON. No explanation, no markdown, no code blocks. Strictly follow all numeric constraints.`;
 
   const anchorNames = activeAnchors.map(function(a){ return a.name; }).join('、');
   const userPrompt=`=== 排班任务 ===
@@ -2081,6 +2083,7 @@ ${memoryStr}
     }
     lastResult = result;
     renderResult(result, days);
+    window._isGenerating = false;
     gotoPanel('result');
   } catch(err){
     showLoading(false);
@@ -2091,6 +2094,8 @@ ${memoryStr}
       + '<div class="alert alert-warn" style="margin-bottom:12px">请检查：①API Key正确 ②服务商匹配 ③账户有余额</div>'
       + rawPreview
       + '<button class="btn btn-primary" onclick="gotoPanel(&quot;generate&quot;)">🔄 重新生成</button>';
+  } finally {
+    window._isGenerating = false;
   }
 }
 
@@ -2188,7 +2193,9 @@ function renderScoreCards(data){
   }
 }
 
+var _isFixing = false;
 async function autoFixSchedule(){
+  if(_isFixing){ showToast('⏳ 修正中，请勿重复点击'); return; }
   var feedback = document.getElementById('debugFeedback');
   var fbText = feedback ? feedback.value.trim() : '';
   if(!fbText){ alert('请先在调试框里描述问题'); return; }
@@ -2197,6 +2204,7 @@ async function autoFixSchedule(){
   var key = getApiKey();
   if(!key){ alert('请先配置API Key'); return; }
 
+  _isFixing = true;
   showLoading(true, '正在修正排班...', {estimatedMs:20000, title:'AI 自动修正中', icon:'🔧'});
 
   var days = getWeekDates(weekOffset);
@@ -2204,7 +2212,7 @@ async function autoFixSchedule(){
   var weeklyShifts = parseInt(document.getElementById('rWeeklyShifts').value)||5;
   var weeklyOff = parseInt(document.getElementById('rWeeklyOff').value)||2;
 
-  var sp = '你是排班修正专家，只输出修正后的完整JSON，不加任何解释或代码块。';
+  var sp = 'You are a scheduling correction system. Output only corrected complete JSON. No explanation, no code blocks.';
   var up = '当前排班（有问题）：' + JSON.stringify(lastResult.schedule)
     + ' 调休：' + JSON.stringify(lastResult.offDays)
     + ' 问题：' + fbText
@@ -2213,20 +2221,36 @@ async function autoFixSchedule(){
     + ' 请修正所有问题输出完整JSON格式与原来相同';
 
   try {
-    var text = await callLLM(sp, up, 1200);
+    var text = await callLLM(sp, up, 2000);
+    // 检查模型是否拒绝（返回了自然语言而非JSON）
+    var looksLikeRefusal = text.length < 300 && !/\{/.test(text);
+    if(looksLikeRefusal){
+      // 换更中性英文措辞自动重试一次
+      text = await callLLM(
+        'You are a JSON data fixer. Fix the data per rules. Output JSON only.',
+        'Data: '+JSON.stringify({schedule:lastResult.schedule,offDays:lastResult.offDays})
+        +' Fix: '+fbText
+        +' Allowed names: '+activeList.map(function(a){return a.name;}).join(',')
+        +' Rule: each name exactly '+weeklyShifts+' shifts, '+weeklyOff+' off days.',
+        2000
+      );
+    }
     showLoading(false);
+    _isFixing = false;
     var clean = text.trim().replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/\s*```$/,'').trim();
-    var first = clean.indexOf('{'), last2 = clean.lastIndexOf('}');
-    if(first>=0&&last2>first) clean=clean.slice(first,last2+1);
+    var fi = clean.indexOf('{'), la = clean.lastIndexOf('}');
+    if(fi>=0&&la>fi) clean=clean.slice(fi,la+1);
+    if(fi<0||la<=fi) throw new Error('模型未返回有效JSON，请换模型后重试');
     var result = JSON.parse(clean);
     lastResult = result;
     renderResult(result, days);
-    // 保存这次修正经验
-    saveDebugMemory(fbText + ' → 已修正');
+    saveDebugMemory(fbText + ' 已修正');
     if(feedback) feedback.value = '';
+    showToast('✅ 修正完成');
   } catch(err){
     showLoading(false);
-    alert('修正失败：'+err.message);
+    _isFixing = false;
+    showToast('❌ 修正失败：' + err.message.slice(0,60));
   }
 }
 
