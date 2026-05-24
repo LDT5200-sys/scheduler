@@ -2443,6 +2443,15 @@ async function generateSchedule(){
   }
 
   // ── Step2: 用AI优化排班（在合法基础上做微调）──
+  // 如果是结构化调整触发的重新生成，跳过AI优化，直接用JS结果
+  if(window._skipAIOptimization){
+    showLoading(false);
+    lastResult=baseResult;
+    renderResult(baseResult, days);
+    window._isGenerating=false;
+    gotoPanel('result');
+    return;
+  }
   var _memory=[];
   try{_memory=JSON.parse(localStorage.getItem('sch_memory')||'[]');}catch(e){}
 
@@ -2472,7 +2481,7 @@ async function generateSchedule(){
     _p.push('- Each anchor appears AT MOST ONCE per day');
     _p.push('- Each anchor works EXACTLY '+weeklyShifts+' days total');
     _p.push('- After E-shift (22-02), anchor cannot work A(06-10) or B(10-14) next day');
-    _p.push('- No anchor in same shift slot more than 3 consecutive days');
+    _p.push('- No anchor in same shift slot more than '+(window._rotationLimit||3)+' consecutive days');
     _p.push('- Only use these anchor names: '+activeAnchors.map(function(a){return a.name;}).join(','));
     if(strategy) _p.push('Strategy: '+strategy);
     if(dataNote) _p.push('Data: '+dataNote);
@@ -2642,18 +2651,31 @@ function renderSmartIssues(data){
   var dayNames = ['周一','周二','周三','周四','周五','周六','周日'];
   var shiftKeys = shifts.map(function(s){return s.name;});
 
-  // 检测：同主播同班次连续天数
+  // 检测：同主播同班次连续天数（排除有班次限制的主播）
   shiftKeys.forEach(function(sk){
     var streak=0, lastName='';
     dayNames.forEach(function(d){
       var nm = data.schedule[sk]&&data.schedule[sk][d];
-      if(nm && nm===lastName){ streak++; if(streak>=3) { var already=issues.find(function(x){return x.key===nm+'_'+sk;}); if(!already) issues.push({key:nm+'_'+sk, type:'rotation', text:nm+' 的 '+sk+' 已连排'+(streak+1)+'天', action:'applyRotationLimit(2)'}); } }
-      else{ streak=1; lastName=nm||''; }
+      if(nm && nm===lastName){
+        streak++;
+        if(streak>=3){
+          // 检查该主播是否有班次限制（限制在这个班次是正常的）
+          var anchor = anchors.find(function(a){return a.name===nm;});
+          var isRestricted = anchor && anchor.allowedShifts && anchor.allowedShifts.length>0 && anchor.allowedShifts.length<shifts.length;
+          if(!isRestricted){
+            var already=issues.find(function(x){return x.key===nm+'_'+sk;});
+            if(!already) issues.push({key:nm+'_'+sk, type:'rotation', text:nm+' 的 '+sk+' 已连排'+(streak+1)+'天', action:'applyRotationLimit(2)'});
+          }
+        }
+      } else{ streak=1; lastName=nm||''; }
     });
   });
 
-  // 检测：某主播本周全在同一班次
+  // 检测：某主播本周全在同一班次（排除有班次限制的主播）
   anchors.filter(function(a){return !a.disabled;}).forEach(function(a){
+    // 如果该主播只允许某些班次，集中在那些班次是正常的
+    var hasRestriction = a.allowedShifts && a.allowedShifts.length > 0 && a.allowedShifts.length < shifts.length;
+    if(hasRestriction) return; // 跳过有班次限制的主播
     shiftKeys.forEach(function(sk){
       var count=0, total=0;
       dayNames.forEach(function(d){ var nm=data.schedule[sk]&&data.schedule[sk][d]; if(nm) total++; if(nm===a.name) count++; });
@@ -2680,17 +2702,18 @@ function renderSmartIssues(data){
 function applyRotationLimit(maxDays){
   if(!lastResult){ showToast('请先生成排班'); return; }
   window._rotationLimit = maxDays;
-  showToast('🔄 正在应用连排≤'+maxDays+'天约束，重新排班...');
-  setTimeout(function(){ generateSchedule(); }, 300);
+  window._skipAIOptimization = true;  // 结构化调整直接用JS结果
+  showToast('🔄 正在应用连排≤'+maxDays+'天约束...');
+  setTimeout(function(){ generateSchedule(); window._skipAIOptimization=false; }, 300);
 }
 
-// 调休分布方式
 function applyRestPattern(pattern){
   if(!lastResult){ showToast('请先生成排班'); return; }
   window._restPattern = pattern;
+  window._skipAIOptimization = true;
   var labels = {spread:'分散休', weekend:'周末休', consecutive:'连休'};
-  showToast('🔄 调休方式切换为「'+labels[pattern]+'」，重新排班...');
-  setTimeout(function(){ generateSchedule(); }, 300);
+  showToast('🔄 调休方式切换为「'+labels[pattern]+'」...');
+  setTimeout(function(){ generateSchedule(); window._skipAIOptimization=false; }, 300);
 }
 
 var _isFixing = false;
