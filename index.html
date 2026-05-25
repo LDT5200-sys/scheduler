@@ -2401,8 +2401,16 @@ function buildScheduleWithJS(activeAnchors, shifts, weeklyShifts, weeklyOff, min
 async function generateSchedule(){
   const key=getApiKey();
   if(!key){ alert('请先在左侧选择服务商并填入 API Key'); return; }
-  if(window._isGenerating){ showToast('⏳ 生成中，请勿重复点击'); return; }
+  // 如果超过60秒还在生成，强制解锁（防止卡死）
+  if(window._isGenerating){
+    if(!window._generatingStartTime || Date.now()-window._generatingStartTime > 60000){
+      window._isGenerating = false; // 超时强制解锁
+    } else {
+      showToast('⏳ 生成中，请勿重复点击'); return;
+    }
+  }
   window._isGenerating = true;
+  window._generatingStartTime = Date.now();
 
   const days=getWeekDates(weekOffset);
   const weeklyShifts=parseInt(document.getElementById('rWeeklyShifts').value)||5;
@@ -2445,6 +2453,7 @@ async function generateSchedule(){
   // ── Step2: 用AI优化排班（在合法基础上做微调）──
   // 如果是结构化调整触发的重新生成，跳过AI优化，直接用JS结果
   if(window._skipAIOptimization){
+    window._skipAIOptimization = false; // 立刻重置，防止下次误触
     showLoading(false);
     lastResult=baseResult;
     renderResult(baseResult, days);
@@ -2700,20 +2709,20 @@ function renderSmartIssues(data){
 
 // 连续班次限制（重新运行JS算法，带更严格的轮换约束）
 function applyRotationLimit(maxDays){
-  if(!lastResult){ showToast('请先生成排班'); return; }
   window._rotationLimit = maxDays;
-  window._skipAIOptimization = true;  // 结构化调整直接用JS结果
+  window._skipAIOptimization = true;
+  window._isGenerating = false; // 解除可能残留的锁
   showToast('🔄 正在应用连排≤'+maxDays+'天约束...');
-  setTimeout(function(){ generateSchedule(); window._skipAIOptimization=false; }, 300);
+  setTimeout(generateSchedule, 100);
 }
 
 function applyRestPattern(pattern){
-  if(!lastResult){ showToast('请先生成排班'); return; }
   window._restPattern = pattern;
   window._skipAIOptimization = true;
+  window._isGenerating = false;
   var labels = {spread:'分散休', weekend:'周末休', consecutive:'连休'};
   showToast('🔄 调休方式切换为「'+labels[pattern]+'」...');
-  setTimeout(function(){ generateSchedule(); window._skipAIOptimization=false; }, 300);
+  setTimeout(generateSchedule, 100);
 }
 
 var _isFixing = false;
