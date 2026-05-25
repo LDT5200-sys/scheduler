@@ -2295,50 +2295,56 @@ function buildScheduleWithJS(activeAnchors, shifts, weeklyShifts, weeklyOff, min
       if(assignedShifts[shift.name]) return; // 已锁死
       var isEarly = (shift.id==='A'||shift.id==='B');
 
-      var pool = sortedByTier.filter(function(a){
+      // 基础候选池：过滤已用、班次禁止、E班冷却
+      var basePool = sortedByTier.filter(function(a){
         if(usedToday[a.name]) return false;
         if(bannedShifts[a.name][di] && bannedShifts[a.name][di][shift.id]) return false;
         if(isEarly && eCooled.some(function(e){return e.name===a.name;})) return false;
         return true;
       });
 
-      // 轮换约束：如果某人在这个班次已连排 >= rotationLimit 天，降低优先级
-      pool.sort(function(a, b){
-        var aStreak=0, bStreak=0;
-        for(var back=di-1; back>=Math.max(0,di-rotationLimit); back--){
-          var dn=dayNames[back];
-          if(schedule[shift.name]&&schedule[shift.name][dn]===a.name) aStreak++;
+      // 计算每个候选的连排天数
+      function getStreak(anchorName){
+        var streak=0;
+        for(var back=di-1; back>=0; back--){
+          if(schedule[shift.name]&&schedule[shift.name][dayNames[back]]===anchorName) streak++;
           else break;
         }
-        for(var back2=di-1; back2>=Math.max(0,di-rotationLimit); back2--){
-          var dn2=dayNames[back2];
-          if(schedule[shift.name]&&schedule[shift.name][dn2]===b.name) bStreak++;
-          else break;
-        }
-        // 连排超限的排到池子后面
-        var aOver = aStreak>=rotationLimit?1:0;
-        var bOver = bStreak>=rotationLimit?1:0;
-        if(aOver!==bOver) return aOver-bOver;
-        // tier排序
-        var tierScore2={S:4,A:3,B:2,C:1};
-        return (tierScore2[b.rating]||1)-(tierScore2[a.rating]||1);
+        return streak;
+      }
+
+      // 硬性轮换约束：连排达到上限的直接剔除出候选池
+      var rotatedPool = basePool.filter(function(a){
+        return getStreak(a.name) < rotationLimit;
       });
 
-      // 非黄金班次：B级主播优先（稳盘）
+      // 如果硬剔除后池子有人用，否则回退到基础池
+      var pool = rotatedPool.length > 0 ? rotatedPool : basePool;
+
+      // 池内按 tier 排序（田忌赛马：高tier → 黄金档，B tier → 早班/C班）
+      pool.sort(function(a,b){
+        var ts={S:4,A:3,B:2,C:1};
+        return (ts[b.rating]||1)-(ts[a.rating]||1);
+      });
+
+      // 选人：按班次角色匹配
       var chosen;
       if(goldenSlots.includes(shift.id)){
-        chosen = pool[0]; // tier最高的
-      } else if(shift.id==='A'){
-        // 早班：找稳定型（B级或连续天数少的）
-        chosen = pool.find(function(a){return a.rating==='B';}) || pool[pool.length-1];
+        // 黄金档：tier最高
+        chosen = pool[0];
+      } else if(shift.id==='A'||shift.id==='B'){
+        // 早/午班：优先B级稳定型（且未超轮换）
+        chosen = pool.find(function(a){return a.rating==='B';})
+               || pool.find(function(a){return a.rating==='C';})
+               || pool[pool.length-1];
       } else if(shift.id==='C'){
-        // C班稳盘：方差小的中坚
+        // C班稳盘：B级或中间值
         chosen = pool.find(function(a){return a.rating==='B';}) || pool[Math.floor(pool.length/2)] || pool[0];
       } else {
         chosen = pool[0];
       }
 
-      // 如果池子为空（E班冷却导致），放宽约束
+      // 最终兜底：如果以上逻辑没选出人（极端情况），从任意未用的人中选
       if(!chosen){
         pool = sortedByTier.filter(function(a){ return !usedToday[a.name]; });
         chosen = pool[0];
