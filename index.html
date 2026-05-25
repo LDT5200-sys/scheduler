@@ -2302,22 +2302,24 @@ function buildScheduleWithJS(activeAnchors, shifts, weeklyShifts, weeklyOff, min
         return true;
       });
 
-      // 轮换约束：连排已达上限的主播优先排除，否则降低优先级
-      function shiftStreak(name){
-        var cnt=0;
-        for(var back=di-1; back>=0; back--){
+      // 轮换约束：如果某人在这个班次已连排 >= rotationLimit 天，降低优先级
+      pool.sort(function(a, b){
+        var aStreak=0, bStreak=0;
+        for(var back=di-1; back>=Math.max(0,di-rotationLimit); back--){
           var dn=dayNames[back];
-          if(schedule[shift.name]&&schedule[shift.name][dn]===name) cnt++;
+          if(schedule[shift.name]&&schedule[shift.name][dn]===a.name) aStreak++;
           else break;
         }
-        return cnt;
-      }
-      var strictPool = pool.filter(function(a){ return shiftStreak(a.name) < rotationLimit; });
-      if(strictPool.length) pool = strictPool;
-      pool.sort(function(a, b){
-        var aOver = shiftStreak(a.name)>=rotationLimit-1?1:0;
-        var bOver = shiftStreak(b.name)>=rotationLimit-1?1:0;
+        for(var back2=di-1; back2>=Math.max(0,di-rotationLimit); back2--){
+          var dn2=dayNames[back2];
+          if(schedule[shift.name]&&schedule[shift.name][dn2]===b.name) bStreak++;
+          else break;
+        }
+        // 连排超限的排到池子后面
+        var aOver = aStreak>=rotationLimit?1:0;
+        var bOver = bStreak>=rotationLimit?1:0;
         if(aOver!==bOver) return aOver-bOver;
+        // tier排序
         var tierScore2={S:4,A:3,B:2,C:1};
         return (tierScore2[b.rating]||1)-(tierScore2[a.rating]||1);
       });
@@ -2397,11 +2399,8 @@ function buildScheduleWithJS(activeAnchors, shifts, weeklyShifts, weeklyOff, min
 }
 
 async function generateSchedule(){
-  const skipAI = !!window._skipAIOptimization;
-  if(!skipAI){
-    const key=getApiKey();
-    if(!key){ alert('请先在左侧选择服务商并填入 API Key'); return; }
-  }
+  const key=getApiKey();
+  if(!key){ alert('请先在左侧选择服务商并填入 API Key'); return; }
   if(window._isGenerating){ showToast('⏳ 生成中，请勿重复点击'); return; }
   window._isGenerating = true;
 
@@ -2665,7 +2664,7 @@ function renderSmartIssues(data){
           var isRestricted = anchor && anchor.allowedShifts && anchor.allowedShifts.length>0 && anchor.allowedShifts.length<shifts.length;
           if(!isRestricted){
             var already=issues.find(function(x){return x.key===nm+'_'+sk;});
-            if(!already) issues.push({key:nm+'_'+sk, type:'rotation', text:nm+' 的 '+sk+' 已连排'+(streak+1)+'天', action:"fixScheduleIssue("+JSON.stringify(nm+'_'+sk)+")"});
+            if(!already) issues.push({key:nm+'_'+sk, type:'rotation', text:nm+' 的 '+sk+' 已连排'+(streak+1)+'天', action:'applyRotationLimit(2)'});
           }
         }
       } else{ streak=1; lastName=nm||''; }
@@ -2681,7 +2680,7 @@ function renderSmartIssues(data){
       var count=0, total=0;
       dayNames.forEach(function(d){ var nm=data.schedule[sk]&&data.schedule[sk][d]; if(nm) total++; if(nm===a.name) count++; });
       if(count>=5 && total>=5){
-        issues.push({key:a.name+'_all_'+sk, type:'rotation', text:a.name+' 本周全部集中在 '+sk, action:"fixScheduleIssue("+JSON.stringify(a.name+'_all_'+sk)+")"});
+        issues.push({key:a.name+'_all_'+sk, type:'rotation', text:a.name+' 本周全部集中在 '+sk, action:'applyRotationLimit(2)'});
       }
     });
   });
@@ -2694,168 +2693,27 @@ function renderSmartIssues(data){
     +issues.map(function(issue){
       return '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'
         +'<span style="font-size:11px;color:var(--gold)">⚠️ '+issue.text+'</span>'
-        +'<button class="btn btn-ghost btn-sm" style="padding:3px 9px;font-size:11px" onclick=\''+issue.action+'\'>一键修复</button>'
+        +'<button class="btn btn-ghost btn-sm" style="padding:3px 9px;font-size:11px" onclick="'+issue.action+'">一键修复</button>'
         +'</div>';
     }).join('');
 }
 
-// ── 局部修复：直接在现有排班表上交换，立刻可见 ──
-function recomputeScheduleMeta(data){
-  var dayNames=['周一','周二','周三','周四','周五','周六','周日'];
-  var activeList=anchors.filter(function(a){return !a.disabled;});
-  var anchorNames=activeList.map(function(a){return a.name;});
-  var shiftKeys=shifts.map(function(s){return s.name;});
-  var awd={};
-  anchorNames.forEach(function(n){awd[n]={};});
-  shiftKeys.forEach(function(sk){
-    dayNames.forEach(function(d){
-      var nm=data.schedule[sk]&&data.schedule[sk][d];
-      if(nm&&awd[nm]!==undefined) awd[nm][d]=true;
-    });
-  });
-  if(!data.offDays) data.offDays={};
-  dayNames.forEach(function(d){
-    data.offDays[d]=anchorNames.filter(function(n){return !awd[n][d];});
-  });
-  data.anchorWeekly={};
-  anchorNames.forEach(function(n){
-    data.anchorWeekly[n]={shifts:Object.keys(awd[n]).length, off:7-Object.keys(awd[n]).length};
-  });
-  return data;
-}
-
-function parseIssueKey(issueKey){
-  var shiftKeys=shifts.map(function(s){return s.name;});
-  if(issueKey.indexOf('_all_')>=0){
-    var parts=issueKey.split('_all_');
-    return {anchorName:parts[0], shiftKey:parts.slice(1).join('_all_'), type:'concentration'};
-  }
-  for(var i=0;i<shiftKeys.length;i++){
-    var sk=shiftKeys[i];
-    var suffix='_'+sk;
-    if(issueKey.slice(-suffix.length)===suffix){
-      return {anchorName:issueKey.slice(0,-suffix.length), shiftKey:sk, type:'streak'};
-    }
-  }
-  return null;
-}
-
-function getShiftStreakDays(schedule, anchorName, shiftKey, dayNames){
-  var streaks=[], current=[];
-  dayNames.forEach(function(d){
-    if(schedule[shiftKey]&&schedule[shiftKey][d]===anchorName){
-      current.push(d);
-    } else {
-      if(current.length){ streaks.push(current.slice()); current=[]; }
-    }
-  });
-  if(current.length) streaks.push(current);
-  return streaks.filter(function(s){return s.length>=3;});
-}
-
-function canSwapSameDay(schedule, day, sk1, sk2, name1, name2){
-  if(!name1||!name2||name1===name2) return false;
-  var a1=anchors.find(function(a){return a.name===name1;});
-  var a2=anchors.find(function(a){return a.name===name2;});
-  var s1=shifts.find(function(s){return s.name===sk1;});
-  var s2=shifts.find(function(s){return s.name===sk2;});
-  if(!s1||!s2) return false;
-  if(a1&&a1.allowedShifts&&a1.allowedShifts.length&&!a1.allowedShifts.includes(s2.id)) return false;
-  if(a2&&a2.allowedShifts&&a2.allowedShifts.length&&!a2.allowedShifts.includes(s1.id)) return false;
-  var dayNames=['周一','周二','周三','周四','周五','周六','周日'];
-  var di=dayNames.indexOf(day);
-  if(di>0){
-    var prevDay=dayNames[di-1];
-    var eShift=shifts.find(function(s){return s.id==='E';});
-    if(eShift){
-      if(schedule[eShift.name]&&schedule[eShift.name][prevDay]===name1&&(s2.id==='A'||s2.id==='B')) return false;
-      if(schedule[eShift.name]&&schedule[eShift.name][prevDay]===name2&&(s1.id==='A'||s1.id==='B')) return false;
-    }
-  }
-  return true;
-}
-
-function swapShiftsOnDay(schedule, day, sk1, sk2){
-  var name1=schedule[sk1]&&schedule[sk1][day];
-  var name2=schedule[sk2]&&schedule[sk2][day];
-  if(!canSwapSameDay(schedule, day, sk1, sk2, name1, name2)) return false;
-  schedule[sk1][day]=name2;
-  schedule[sk2][day]=name1;
-  return true;
-}
-
-function fixScheduleIssue(issueKey){
-  if(!lastResult||!lastResult.schedule){ showToast('请先生成排班'); return; }
-  var parsed=parseIssueKey(issueKey);
-  if(!parsed){ showToast('⚠️ 无法识别问题类型'); return; }
-
-  var schedule=JSON.parse(JSON.stringify(lastResult.schedule));
-  var dayNames=['周一','周二','周三','周四','周五','周六','周日'];
-  var shiftKeys=shifts.map(function(s){return s.name;});
-  var fixed=false;
-  var anchorName=parsed.anchorName;
-  var shiftKey=parsed.shiftKey;
-
-  if(parsed.type==='concentration'){
-    var daysOnShift=dayNames.filter(function(d){return schedule[shiftKey]&&schedule[shiftKey][d]===anchorName;});
-    var swapCount=Math.min(2, Math.max(1, daysOnShift.length-2));
-    for(var i=0;i<daysOnShift.length&&i<swapCount;i++){
-      var day=daysOnShift[i];
-      for(var j=0;j<shiftKeys.length;j++){
-        var otherSk=shiftKeys[j];
-        if(otherSk===shiftKey) continue;
-        if(swapShiftsOnDay(schedule, day, shiftKey, otherSk)){ fixed=true; break; }
-      }
-    }
-  } else {
-    var badStreaks=getShiftStreakDays(schedule, anchorName, shiftKey, dayNames);
-    badStreaks.sort(function(a,b){return b.length-a.length;});
-    for(var si=0; si<badStreaks.length && !fixed; si++){
-      var breakDay=badStreaks[si][badStreaks[si].length-1];
-      for(var k=0;k<shiftKeys.length;k++){
-        var osk=shiftKeys[k];
-        if(osk===shiftKey) continue;
-        if(swapShiftsOnDay(schedule, breakDay, shiftKey, osk)){ fixed=true; break; }
-      }
-    }
-  }
-
-  if(!fixed){
-    showToast('⚠️ 无法自动修复（班次限制或E班冷却冲突），请手动调整或重新生成');
-    return;
-  }
-
-  lastResult.schedule=schedule;
-  recomputeScheduleMeta(lastResult);
-  var days=getWeekDates(weekOffset);
-  renderResult(lastResult, days);
-  showToast('✅ 已修复：'+anchorName+' 的 '+shiftKey+' 分配已调整');
-}
-
 // 连续班次限制（重新运行JS算法，带更严格的轮换约束）
-async function applyRotationLimit(maxDays){
+function applyRotationLimit(maxDays){
   if(!lastResult){ showToast('请先生成排班'); return; }
   window._rotationLimit = maxDays;
-  window._skipAIOptimization = true;
+  window._skipAIOptimization = true;  // 结构化调整直接用JS结果
   showToast('🔄 正在应用连排≤'+maxDays+'天约束...');
-  try {
-    await generateSchedule();
-  } finally {
-    window._skipAIOptimization = false;
-  }
+  setTimeout(function(){ generateSchedule(); window._skipAIOptimization=false; }, 300);
 }
 
-async function applyRestPattern(pattern){
+function applyRestPattern(pattern){
   if(!lastResult){ showToast('请先生成排班'); return; }
   window._restPattern = pattern;
   window._skipAIOptimization = true;
   var labels = {spread:'分散休', weekend:'周末休', consecutive:'连休'};
   showToast('🔄 调休方式切换为「'+labels[pattern]+'」...');
-  try {
-    await generateSchedule();
-  } finally {
-    window._skipAIOptimization = false;
-  }
+  setTimeout(function(){ generateSchedule(); window._skipAIOptimization=false; }, 300);
 }
 
 var _isFixing = false;
