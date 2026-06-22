@@ -1024,15 +1024,22 @@
 
 <script>
 // ========== STATE ==========
-let anchors = [
+const ROSTER_VERSION = '2026-06-22-anchor-roster-v2';
+const DEPARTED_ANCHORS = ['乔莹', '熊怡芯'];
+const NEW_ANCHORS = [
+  {name:"冯芊祎",rating:"B"},
+  {name:"单楚陵",rating:"B"},
+  {name:"朱佳琪",rating:"B"}
+];
+const DEFAULT_ANCHORS = [
   {name:"邹楠楠",rating:"S"},
   {name:"赵颢棋",rating:"A"},
   {name:"苑含笑",rating:"A"},
-  {name:"乔莹",rating:"B"},
   {name:"范晓晶",rating:"B"},
   {name:"张新",rating:"B"},
-  {name:"熊怡芯",rating:"C"}
+  ...NEW_ANCHORS
 ];
+let anchors = DEFAULT_ANCHORS.map(a => ({...a}));
 let shifts = [
   {id:"A",name:"A班",start:"06:00",end:"10:00"},
   {id:"B",name:"B班",start:"10:00",end:"14:00"},
@@ -1652,6 +1659,7 @@ function toggleAllowedShift(anchorIdx, shiftId){
     a.allowedShifts = a.allowedShifts.concat([shiftId]);
   }
   renderAnchorList();
+  saveAnchorsSettings();
 }
 function addAnchor(){
   const n = document.getElementById('newAnchorName').value.trim();
@@ -1664,11 +1672,13 @@ function addAnchor(){
   document.getElementById('newAnchorName').value='';
   renderAnchorList();
   refreshAllSelects();
+  saveAnchorsSettings();
 }
 function toggleAnchor(i){
   anchors[i].disabled = !anchors[i].disabled;
   renderAnchorList();
   refreshAllSelects();
+  saveAnchorsSettings();
   // 同步刷新生成排班页统计
   if(document.getElementById('panel-generate').classList.contains('active')) refreshGeneratePage();
 }
@@ -1676,9 +1686,15 @@ function deleteAnchor(i){
   anchors.splice(i,1);
   renderAnchorList();
   refreshAllSelects();
+  saveAnchorsSettings();
   if(document.getElementById('panel-generate').classList.contains('active')) refreshGeneratePage();
 }
-function setRating(i,r){ anchors[i].rating=r; anchors[i].ratingSource='manual'; renderAnchorList(); }
+function setRating(i,r){
+  anchors[i].rating=r;
+  anchors[i].ratingSource='manual';
+  renderAnchorList();
+  saveAnchorsSettings();
+}
 
 // ========== SHIFTS ==========
 function renderShiftList(){
@@ -3159,13 +3175,56 @@ async function checkCompliance(){
 var STORAGE_KEYS = {
   api:     'sch_api',       // provider + key + model
   anchors: 'sch_anchors',   // 主播花名册
+  rosterVersion: 'sch_roster_version',
   shifts:  'sch_shifts',    // 班次配置
   rules:   'sch_rules',     // 排班规则参数
   special: 'sch_special',   // 特殊要求
   rating:  'sch_rating',    // 评级字段/权重/规则文本（已有 scheduleRuleConfig，统一进来）
 };
 
-function saveAllSettings() {
+function normalizeAnchorRoster(list) {
+  var seen = {};
+  return (Array.isArray(list) ? list : [])
+    .filter(function(a){ return a && a.name && !DEPARTED_ANCHORS.includes(a.name); })
+    .map(function(a){
+      return Object.assign({rating:'B', disabled:false, ratingSource:'manual', allowedShifts:[]}, a);
+    })
+    .filter(function(a){
+      if(seen[a.name]) return false;
+      seen[a.name] = true;
+      return true;
+    });
+}
+
+function migrateAnchorRoster(list) {
+  var next = normalizeAnchorRoster(list);
+  NEW_ANCHORS.forEach(function(a) {
+    if(!next.find(function(x){ return x.name === a.name; })) {
+      next.push(Object.assign({disabled:false, ratingSource:'default', allowedShifts:[]}, a));
+    }
+  });
+  return next.length ? next : DEFAULT_ANCHORS.map(function(a){ return Object.assign({disabled:false, ratingSource:'default', allowedShifts:[]}, a); });
+}
+
+function saveAnchorsSettings() {
+  try {
+    localStorage.setItem(STORAGE_KEYS.anchors, JSON.stringify(anchors));
+    localStorage.setItem(STORAGE_KEYS.rosterVersion, ROSTER_VERSION);
+  } catch(e) {
+    console.warn('保存主播花名册失败:', e);
+  }
+}
+
+var _settingsAutosaveTimer = null;
+function scheduleSettingsAutosave() {
+  clearTimeout(_settingsAutosaveTimer);
+  _settingsAutosaveTimer = setTimeout(function() {
+    saveAllSettings(false);
+  }, 600);
+}
+
+function saveAllSettings(showMsg) {
+  if(showMsg === undefined) showMsg = true;
   try {
     // API 配置
     localStorage.setItem(STORAGE_KEYS.api, JSON.stringify({
@@ -3196,9 +3255,11 @@ function saveAllSettings() {
       weights: _fieldWeights,
       logic:   document.getElementById('ruleLogicText') ? document.getElementById('ruleLogicText').value : ''
     }));
-    showToast('✅ 所有设置已保存到本地');
+    localStorage.setItem(STORAGE_KEYS.rosterVersion, ROSTER_VERSION);
+    if(showMsg) showToast('✅ 所有设置已保存到本地');
   } catch(e) {
-    showToast('❌ 保存失败：' + e.message);
+    if(showMsg) showToast('❌ 保存失败：' + e.message);
+    else console.warn('保存设置失败:', e);
   }
 }
 
@@ -3216,10 +3277,17 @@ function loadAllSettings() {
     }
     // 主播
     var savedAnchors = JSON.parse(localStorage.getItem(STORAGE_KEYS.anchors) || 'null');
+    var savedRosterVersion = localStorage.getItem(STORAGE_KEYS.rosterVersion);
     if(savedAnchors && savedAnchors.length) {
-      anchors = savedAnchors;
+      anchors = savedRosterVersion === ROSTER_VERSION
+        ? normalizeAnchorRoster(savedAnchors)
+        : migrateAnchorRoster(savedAnchors);
+      saveAnchorsSettings();
       renderAnchorList();
       refreshAllSelects();
+    } else {
+      anchors = migrateAnchorRoster(DEFAULT_ANCHORS);
+      saveAnchorsSettings();
     }
     // 班次
     var savedShifts = JSON.parse(localStorage.getItem(STORAGE_KEYS.shifts) || 'null');
@@ -3304,7 +3372,13 @@ function confirmClear() {
     var key = cb.value;
     localStorage.removeItem(STORAGE_KEYS[key]);
     // 同时重置内存状态
-    if(key === 'anchors') { anchors = []; renderAnchorList(); refreshAllSelects(); }
+    if(key === 'anchors') {
+      localStorage.removeItem(STORAGE_KEYS.rosterVersion);
+      anchors = DEFAULT_ANCHORS.map(function(a){ return Object.assign({disabled:false, ratingSource:'default', allowedShifts:[]}, a); });
+      saveAnchorsSettings();
+      renderAnchorList();
+      refreshAllSelects();
+    }
     if(key === 'shifts')  { shifts  = []; renderShiftList(); }
     if(key === 'rules') {
       document.getElementById('rWeeklyShifts').value = '5';
@@ -3351,6 +3425,17 @@ renderShiftList();
 refreshSpecialSelects();
 loadAllSettings();
 refreshGeneratePage();
+document.addEventListener('change', function(e) {
+  if(e.target && e.target.closest && e.target.closest('#clearModal')) return;
+  scheduleSettingsAutosave();
+});
+document.addEventListener('input', function(e) {
+  if(e.target && e.target.closest && e.target.closest('#clearModal')) return;
+  if(e.target && ['INPUT','TEXTAREA','SELECT'].includes(e.target.tagName)) scheduleSettingsAutosave();
+});
+window.addEventListener('beforeunload', function() {
+  saveAllSettings(false);
+});
 </script>
 </body>
 </html>
